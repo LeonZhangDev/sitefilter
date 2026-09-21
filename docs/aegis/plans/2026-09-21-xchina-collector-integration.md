@@ -201,11 +201,11 @@ Planning is necessary because this change introduces a security-sensitive native
 **Change Necessity:** bridge-side lookup would race and duplicate canonical logic.  
 **Impact/Compatibility:** `deduplicate` defaults false, preserving current clients.
 
-- [ ] **Write the failing test.** Cover `created`, `reused-active`, `confirm-redownload`, `recommend-retry`, and `recommend-resume`; assert two concurrent deduplicated creates produce one task; assert a normal create still produces a new task every time.
-- [ ] **Verify RED.** Run `uv run pytest -q tests/test_task_dedup.py tests/test_database.py`; expect missing schema fields/helper failures.
-- [ ] **Implement minimal code.** Add `deduplicate: bool = False`, `force_new: bool = False`, and `incremental: Optional[bool]` to `TaskCreateIn`; add optional `disposition` and `content_key` to `TaskCreateOut`; implement one process lock around lookup/create and store the canonical key in task options without a database migration.
-- [ ] **Verify GREEN.** Run `uv run pytest -q tests/test_task_dedup.py tests/test_database.py tests/test_incremental.py tests/test_collector_autoresolve.py`.
-- [ ] **Commit.** Run `git add backend/core/task_dedup.py backend/models/schemas.py backend/api/tasks.py backend/core/database.py tests/test_task_dedup.py tests/test_database.py && git commit -m "[tasks] feat: deduplicate canonical content tasks"`.
+- [x] **Write the failing test.** Cover `created`, `reused-active`, `confirm-redownload`, `recommend-retry`, and `recommend-resume`; assert two concurrent deduplicated creates produce one task; assert a normal create still produces a new task every time.
+- [x] **Verify RED.** Run `uv run pytest -q tests/test_task_dedup.py tests/test_database.py`; expect missing schema fields/helper failures.
+- [x] **Implement minimal code.** Add `deduplicate: bool = False`, `force_new: bool = False`, and `incremental: Optional[bool]` to `TaskCreateIn`; add optional `disposition` and `content_key` to `TaskCreateOut`; implement one process lock around lookup/create and store the canonical key in task options without a database migration.
+- [x] **Verify GREEN.** Run `uv run pytest -q tests/test_task_dedup.py tests/test_database.py tests/test_incremental.py tests/test_collector_autoresolve.py`.
+- [x] **Commit.** Run `git add backend/core/task_dedup.py backend/models/schemas.py backend/api/tasks.py backend/core/database.py tests/test_task_dedup.py tests/test_database.py && git commit -m "[tasks] feat: deduplicate canonical content tasks"`.
 
 ### Task 3: Expose task summary and management deep links
 

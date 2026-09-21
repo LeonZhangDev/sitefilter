@@ -2,13 +2,13 @@
 
 ## TodoCheckpointDraft
 
-- Current todo: Task 2 — implement atomic duplicate dispositions.
-- Active slice: extend Collector persistence and task creation around the canonical identity owner established by Task 1.
-- Completed todos: specification approval, implementation planning, Task 0 repository bootstrap/baseline verification, and Task 1 canonical XChina content identity.
-- Pending todos: Tasks 2–10 from the parent implementation plan.
-- Evidence refs: approved requirements/design/plan, Task 0 baseline evidence below, Collector commit `5b4ef98429b40decffbf595e542c5a712e369a7a`, and `90-evidence.md`.
-- Blocked on: nothing known for Task 2.
-- Next step: dispatch the Task 2 implementer with the exact schema/API compatibility boundary and atomicity tests.
+- Current todo: Task 3 — expose task summary and management deep links.
+- Active slice: add a compact Collector task-summary contract and query-driven frontend selection without moving task truth into the extension.
+- Completed todos: specification approval, implementation planning, and Tasks 0–2.
+- Pending todos: Tasks 3–10 from the parent implementation plan.
+- Evidence refs: approved requirements/design/plan, Collector commits `5b4ef98429b40decffbf595e542c5a712e369a7a` and `c95cfbdc7084f47849ca4331657e636fe5ab9c8f`, and `90-evidence.md`.
+- Blocked on: nothing known for Task 3.
+- Next step: dispatch the Task 3 implementer with exact API summary fields, frontend query behavior, and focused tests.
 
 ## Task 0 Evidence
 
@@ -21,7 +21,7 @@
 
 ## ResumeStateHint
 
-Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the parent plan. Confirm both `codex/xchina-collector-integration` worktrees are clean at their recorded commits, then continue with Task 2.
+Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the parent plan. Confirm both feature worktrees are clean at their recorded commits, then continue with Task 3.
 
 ## DriftCheckDraft
 
@@ -30,6 +30,6 @@ Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the par
 - Compatibility boundary: unchanged.
 - New owner/fallback/adapter: only the approved Native Messaging adapter is planned.
 - Retirement track: explicit.
-- Evidence sufficiency: Tasks 0 and 1 have direct RED/GREEN, immutable commit, clean-tree, and two-stage review evidence; later tasks still require their own stated gates.
+- Evidence sufficiency: Tasks 0–2 have direct RED/GREEN, immutable commits, clean-tree, and two-stage review evidence; later tasks still require their own stated gates.
 - Execution Readiness View: present and aligned.
-- Decision: Task 1 remained inside Collector ownership and introduced no network, API, persistence, or extension drift; continue to Task 2.
+- Decision: Task 2 kept canonical identity and disposition ownership in Collector, preserved normal-create compatibility, and introduced no schema migration or cross-process contract drift; continue to Task 3.

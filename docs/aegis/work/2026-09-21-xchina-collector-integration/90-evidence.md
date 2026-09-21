@@ -22,3 +22,11 @@
 - Scope: exactly `backend/core/content_identity.py` and `tests/test_content_identity.py`.
 - Review: amended implementation passed independent specification and code-quality re-review with no open findings.
 
+## Task 2 — Atomic Duplicate Dispositions
+
+- Collector commit: `c95cfbdc7084f47849ca4331657e636fe5ab9c8f` (`[tasks] feat: deduplicate canonical content tasks`).
+- RED evidence covered missing schema/helper behavior, state/force-new counterexamples, mixed active/terminal history, spoofed identity, deterministic contention, and submission failure.
+- Final GREEN: `uv run pytest -q tests/test_task_dedup.py tests/test_database.py tests/test_incremental.py tests/test_collector_autoresolve.py` — 77 passed, one existing warning.
+- Compatibility: non-deduplicated callers remain always-create; canonical keys stay inside task options with no migration; caller-supplied keys are stripped and stored keys are recomputed.
+- Review: independent specification and quality re-reviews passed with no Critical or Important findings.
+- Residual risk: existing `TaskManager.submit()` can retain an in-memory `_active` entry if its executor rejects submission. Database state is changed to `failed`, so the disposition contract remains correct; cleanup inside `TaskManager` is outside Task 2's approved file boundary.
