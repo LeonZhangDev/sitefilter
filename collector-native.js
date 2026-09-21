@@ -165,10 +165,10 @@
       try {
         connection.port.postMessage({ v: PROTOCOL_VERSION, id: id, action: action, payload: payload || {} });
       } catch (e) {
-        delete pending[id];
-        clearTimeout(timer);
+        var failure = bridgeError('native-host-disconnected', '无法发送本机桥接请求，请重试。', true);
         if (port === connection.port && portGeneration === connection.generation) port = null;
-        reject(bridgeError('native-host-disconnected', '无法发送本机桥接请求，请重试。', true));
+        rejectGeneration(connection.generation, failure);
+        try { connection.port.disconnect(); } catch (_) { }
       }
     });
   }

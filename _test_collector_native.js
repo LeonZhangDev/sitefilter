@@ -35,7 +35,10 @@ function harness(seed) {
       connectNative(name) {
         const nativePort = {
           name, sent: [], disconnects: 0, onMessage: event(), onDisconnect: event(),
-          postMessage(msg) { this.sent.push(msg); },
+          postMessage(msg) {
+            if (this.throwNextPost) { this.throwNextPost = false; throw new Error('post failed'); }
+            this.sent.push(msg);
+          },
           disconnect() { this.disconnects++; this.onDisconnect.fire(); },
         };
         ports.push(nativePort);
@@ -153,6 +156,20 @@ function backgroundHarness(seed) {
   oldPort.onDisconnect.fire();
   reply(newPort, newPort.sent[0], { fresh: true });
   check('stale port message/disconnect cannot affect new generation', (await newRequest).fresh === true);
+
+  const sendFailure = harness();
+  const requestA = sendFailure.bridge.request('ping', {}, 1000).catch(e => e.code);
+  const failedPort = sendFailure.ports[0];
+  failedPort.throwNextPost = true;
+  const requestB = sendFailure.bridge.request('get-task', { task_id: 9 }, 1000).catch(e => e.code);
+  const failedCodes = await Promise.all([requestA, requestB]);
+  check('sync send failure rejects the entire old generation immediately',
+    failedCodes.every(code => code === 'native-host-disconnected') && failedPort.disconnects === 1);
+  const requestC = sendFailure.bridge.request('ping', {}, 100);
+  const recoveredPort = sendFailure.ports[1];
+  failedPort.onDisconnect.fire();
+  reply(recoveredPort, recoveredPort.sent[0], { recovered: true });
+  check('new generation survives failed old-port disconnect callback', (await requestC).recovered === true);
 
   const timeoutHarness = harness();
   let timedOut = false;
