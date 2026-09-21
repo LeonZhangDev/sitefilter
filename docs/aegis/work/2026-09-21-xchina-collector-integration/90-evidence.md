@@ -68,3 +68,14 @@
 - Real lifecycle: install, stopped-state startup, self-check failure after a new Collector start, cleanup, old-root/registry/runtime restoration, `-WhatIf`, uninstall, second idempotent uninstall, and full-provision reinstall all passed without elevation or Collector-data deletion.
 - Browser bridge: strict Native Messaging ping passed in Chromium 153 and Edge 154 with the deterministic extension ID `jaihdgjnnpmiabeoefmihmjhoodcjlhf`; branded Chrome unpacked-extension acceptance remains explicitly assigned to Task 10.
 - Regression: `tests/test_sitefilter_native_host.py` passed 74 tests after final installation; both final independent specification and security-quality reviews passed with no blocking findings.
+
+## Task 7 — SiteFilter Native Transport
+
+- SiteFilter commits: `b38ee1f6e52d919d03d92354fd05629c9e2742cd`, `e4e302006c6ba9d8ec12205909aa0762b982ce7e`, and final lifecycle fix `a9115bcbd301986b188b3d4756a822045733575c`.
+- RED: the focused Node test failed before `collector-native.js` and its exported bridge existed.
+- GREEN: `node _test_collector_native.js` passed 26 tests; writeback passed 24; migration passed 80; UTF-8 full CI passed 13 suites and 635 assertions with package validation.
+- Identity/permissions: the fixed public manifest key derives extension ID `jaihdgjnnpmiabeoefmihmjhoodcjlhf`; `nativeMessaging` is present and no localhost host permission was introduced.
+- Lifecycle: a single Native Messaging connection uses generation-scoped pending requests, rejects an entire failed generation immediately, disconnects when idle, reconnects safely, and ignores stale messages/disconnects.
+- Persistence/notifications: storage is normalized to the minimal task schema, mutation failures recover, fixed notification IDs are retry-safe, and successful terminal delivery is persisted before cleanup.
+- Background integration: tests execute the actual service worker routing, alarms, async `sendResponse`, notification click handling, and verify that task deep links remain behind the allowlisted Host action rather than direct tab URLs.
+- Review: final independent specification and code-quality reviews passed with no blocking findings; live browser disconnect/notification timing remains assigned to Task 10.

@@ -266,11 +266,11 @@ Planning is necessary because this change introduces a security-sensitive native
 **Change Necessity:** inline additions to the already mixed-purpose service worker would increase ownership pressure.  
 **Impact/Compatibility:** add `nativeMessaging` and fixed public `key`; no localhost host permission.
 
-- [ ] **Write the failing test.** Mock `chrome.runtime.connectNative`, disconnects, messages, storage, tabs, and notifications; assert request correlation, timeout, reconnect, incompatible protocol, active-task persistence, one terminal notification, notification click deep link, and host-missing classification.
-- [ ] **Verify RED.** Run `node _test_collector_native.js`; expect missing module/exports.
-- [ ] **Implement minimal code.** Export one global `SiteFilterCollectorBridge`; import it with `importScripts("collector-native.js")`; route `sf_collector_*` messages through the helper; add fixed `key` and `nativeMessaging`; include the new script in package whitelist and syntax checks.
-- [ ] **Verify GREEN.** Run `node _test_collector_native.js`, `_test_writeback.js`, `_test_migrate.js`, then `python ci.py --out build-native-transport`.
-- [ ] **Commit.** Run `git add collector-native.js _test_collector_native.js background.js manifest.json make_package.py && git commit -m "[collector] feat: add native task transport"`.
+- [x] **Write the failing test.** Mock `chrome.runtime.connectNative`, disconnects, messages, storage, tabs, and notifications; assert request correlation, timeout, reconnect, incompatible protocol, active-task persistence, one terminal notification, notification click deep link, and host-missing classification.
+- [x] **Verify RED.** Run `node _test_collector_native.js`; expect missing module/exports.
+- [x] **Implement minimal code.** Export one global `SiteFilterCollectorBridge`; import it with `importScripts("collector-native.js")`; route `sf_collector_*` messages through the helper; add fixed `key` and `nativeMessaging`; include the new script in package whitelist and syntax checks.
+- [x] **Verify GREEN.** Run `node _test_collector_native.js`, `_test_writeback.js`, `_test_migrate.js`, then `python ci.py --out build-native-transport`.
+- [x] **Commit.** Run `git add collector-native.js _test_collector_native.js background.js manifest.json make_package.py && git commit -m "[collector] feat: add native task transport"`.
 
 ### Task 8: Add XChina detail-page controls and preview
 

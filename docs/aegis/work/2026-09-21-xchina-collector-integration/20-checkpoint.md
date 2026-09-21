@@ -2,13 +2,13 @@
 
 ## TodoCheckpointDraft
 
-- Current todo: Task 7 — add the SiteFilter native transport owner.
-- Active slice: add one correlated, reconnecting Native Messaging client without localhost permissions or duplicated Collector ownership.
-- Completed todos: specification approval, implementation planning, and Tasks 0–6.
-- Pending todos: Tasks 7–10 from the parent implementation plan.
-- Evidence refs: approved requirements/design/plan, Collector commits through `f00624723a2090c362fd11236d6b9d164378824b`, and `90-evidence.md`.
-- Blocked on: nothing known for Task 7.
-- Next step: implement the isolated transport module with mocked request correlation, persistence, reconnect, notification, and host-missing behavior before wiring the service worker.
+- Current todo: Task 8 — add XChina detail-page controls and preview.
+- Active slice: recognize only approved XChina detail pages and add shared, accessible controls that communicate solely through runtime messages.
+- Completed todos: specification approval, implementation planning, and Tasks 0–7.
+- Pending todos: Tasks 8–10 from the parent implementation plan.
+- Evidence refs: approved requirements/design/plan, SiteFilter commits through `a9115bcbd301986b188b3d4756a822045733575c`, Collector commits through `f00624723a2090c362fd11236d6b9d164378824b`, and `90-evidence.md`.
+- Blocked on: nothing known for Task 8.
+- Next step: build jsdom fixtures and implement isolated XChina controls, preview, shared state, and teardown behavior.
 
 ## Task 0 Evidence
 
@@ -21,7 +21,7 @@
 
 ## ResumeStateHint
 
-Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the parent plan. Confirm both feature worktrees are clean at their recorded commits, then continue with Task 7.
+Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the parent plan. Confirm both feature worktrees are clean at their recorded commits, then continue with Task 8.
 
 ## DriftCheckDraft
 
@@ -30,6 +30,6 @@ Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the par
 - Compatibility boundary: unchanged.
 - New owner/fallback/adapter: only the approved Native Messaging adapter is planned.
 - Retirement track: explicit.
-- Evidence sufficiency: Tasks 0–6 have direct RED/GREEN, immutable commits, cross-platform runtime/protocol/subprocess checks, real per-user installation/browser probes, and two-stage review evidence; later tasks still require their own stated gates.
+- Evidence sufficiency: Tasks 0–7 have direct RED/GREEN, immutable commits, cross-platform runtime/protocol/subprocess checks, real per-user installation/browser probes, MV3 lifecycle/notification fault tests, and two-stage review evidence; later tasks still require their own stated gates.
 - Execution Readiness View: present and aligned.
-- Decision: Task 6 remains a per-user, exact-target, transactional installer with bounded self-checks and pidfd-only process ownership; continue to Task 7.
+- Decision: Task 7 remains the single Native Messaging transport owner with generation-scoped failure handling, bounded requests, retry-safe notifications, and no localhost permission; continue to Task 8.
