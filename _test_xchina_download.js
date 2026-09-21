@@ -13,9 +13,9 @@ function check(name, value) {
   else { failed++; console.log('FAIL  ' + name); }
 }
 
-function wait() { return new Promise(resolve => setTimeout(resolve, 0)); }
+function wait(ms = 0) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
-function fixture(url, heading = '<h1>测试标题</h1>') {
+function fixture(url, heading = '<h1>测试标题</h1>', options = {}) {
   const dom = new JSDOM('<!doctype html><html><body>' + heading + '<div class="cf-host"></div></body></html>', {
     url, runScripts: 'outside-only', pretendToBeVisual: true,
   });
@@ -35,6 +35,7 @@ function fixture(url, heading = '<h1>测试标题</h1>') {
     },
   } };
   window.__SF_XCHINA_DISABLE_AUTO = true;
+  if (options.pollMs != null) window.__SF_XCHINA_POLL_MS = options.pollMs;
   window.eval(code);
   return { dom, window, document: window.document, host, shadow, sent, responses, api: window.SiteFilterXChinaDownload };
 }
@@ -65,7 +66,7 @@ async function run() {
     releasePreview({ ok: true, result: {
       collector: 'xchina_gallery', group: 'Collector 标题', photos: 12, videos: 2,
       media: ['image', 'video'],
-      video_bytes: 1048576, output_dir: 'D:/Downloads', sampled: true,
+      video_bytes: 1048576, output_dir: 'D:/Downloads/private-user', download_dir: '/home/private-user/downloads', sampled: true,
       warning: '这是警告', disposition: 'reused-active',
     } });
     await wait();
@@ -73,7 +74,7 @@ async function run() {
     check('photo primary previews with media auto', photoPreviews.length === 1 && photoPreviews[0].media === 'auto');
     const modal = h.document.querySelector('[data-sf-xchina="modal"]');
     check('preview modal has accessible dialog', modal && modal.getAttribute('role') === 'dialog' && modal.getAttribute('aria-modal') === 'true');
-    check('preview fields rendered', modal && /Collector 标题/.test(modal.textContent) && /xchina_gallery/.test(modal.textContent) && /12/.test(modal.textContent) && /2/.test(modal.textContent) && /1 MB/.test(modal.textContent) && /D:\/Downloads/.test(modal.textContent) && /抽样/.test(modal.textContent) && /这是警告/.test(modal.textContent) && /复用活动任务/.test(modal.textContent));
+    check('preview fields rendered without exposing the local output path', modal && /Collector 标题/.test(modal.textContent) && /xchina_gallery/.test(modal.textContent) && /12/.test(modal.textContent) && /2/.test(modal.textContent) && /1 MB/.test(modal.textContent) && /使用 Collector 当前设置/.test(modal.textContent) && !/private-user|D:\/Downloads|\/home\//.test(h.document.documentElement.outerHTML) && /抽样/.test(modal.textContent) && /这是警告/.test(modal.textContent) && /复用活动任务/.test(modal.textContent));
     check('modal initial focus on confirm', h.document.activeElement && h.document.activeElement.dataset.action === 'confirm');
 
     const confirms = modal.querySelectorAll('[data-action="confirm"]');
@@ -84,11 +85,11 @@ async function run() {
     check('shared loading/disabled state clears together', [...h.document.querySelectorAll('.sf-xchina-primary')].every(b => !b.disabled));
     h.responses.push({ ok: true, result: { collector: 'xchina_gallery', group: '仅图片', media: ['image'], photos: 12, videos: null, sampled: false } });
     h.document.querySelector('[data-media="image"]').click(); await wait();
-    check('image-only action sends media image and accepts excluded null count', h.sent[h.sent.length - 1].media === 'image' && !!h.document.querySelector('[data-sf-xchina="modal"]'));
+    check('image-only action sends media image and accepts excluded null count', h.sent.filter(x => x.type === 'sf_collector_preview').slice(-1)[0].media === 'image' && !!h.document.querySelector('[data-sf-xchina="modal"]'));
     h.document.querySelector('[data-action="cancel"]').click();
     h.responses.push({ ok: true, result: { collector: 'xchina_gallery', group: '仅视频', media: ['video'], photos: null, videos: 2, sampled: false } });
     h.document.querySelector('[data-media="video"]').click(); await wait();
-    check('photo video-only action sends media video', h.sent[h.sent.length - 1].media === 'video' && !!h.document.querySelector('[data-sf-xchina="modal"]'));
+    check('photo video-only action sends media video', h.sent.filter(x => x.type === 'sf_collector_preview').slice(-1)[0].media === 'video' && !!h.document.querySelector('[data-sf-xchina="modal"]'));
     h.document.querySelector('[data-action="cancel"]').click();
     h.api.destroy();
     check('destroy removes all DOM', !h.document.querySelector('[data-sf-xchina]') && !h.shadow.querySelector('[data-sf-xchina]'));
@@ -313,6 +314,72 @@ async function run() {
     const fallback = h.document.querySelector('[data-sf-collector-next-action]');
     check('unknown error code uses a safe retry fallback', fallback && /\u91cd\u8bd5/.test(fallback.textContent) &&
       !/unsafe upstream detail/.test(h.document.querySelector('.sf-xchina-status').textContent));
+  }
+
+  for (const badStatus of [undefined, 'running', 'failed']) {
+    const h = fixture('https://xchina.co/photo/id-6664761937f5a.html'); h.api.init(); await wait();
+    await openReadyPreview(h);
+    const result = { task_id: 51, disposition: 'confirm-redownload', content_key: 'xchina_gallery:6664761937f5a' };
+    if (badStatus !== undefined) result.status = badStatus;
+    h.responses.push({ ok: true, result });
+    h.document.querySelector('[data-action="confirm"]').click(); await wait();
+    const creates = h.sent.filter(x => x.type === 'sf_collector_create');
+    check('redownload authorization rejects confirm disposition with status ' + String(badStatus),
+      creates.length === 1 && creates[0].force_new === false &&
+      !/\u786e\u8ba4\u91cd\u65b0\u4e0b\u8f7d/.test(h.document.querySelector('[data-action="confirm"]').textContent) &&
+      /\u534f\u8bae\u54cd\u5e94\u65e0\u6548/.test(h.document.querySelector('.sf-xchina-status').textContent));
+  }
+
+  {
+    const h = fixture('https://xchina.co/photo/id-6664761937f5a.html', '<h1>测试标题</h1>', { pollMs: 2 });
+    h.responses.push({ ok: true, result: { found: true, task: { id: 90, status: 'pending', resource_counts: { total: 4, done: 0, failed: 0, filtered: 0 } } } });
+    h.responses.push({ ok: true, result: { id: 90, status: 'downloading', progress: 50, resource_counts: { total: 4, done: 2, failed: 0, filtered: 0 } } });
+    h.responses.push({ ok: true, result: { id: 90, status: 'success', progress: 100, resource_counts: { total: 4, done: 4, failed: 0, filtered: 0 } } });
+    h.api.init(); await wait(100);
+    check('restored active task polls pending through downloading to success', /#90/.test(h.document.querySelector('.sf-xchina-status').textContent) &&
+      /\u5df2\u5b8c\u6210/.test(h.document.querySelector('.sf-xchina-status').textContent) &&
+      h.sent.filter(x => x.type === 'sf_collector_get_task').length === 2);
+    const stoppedAt = h.sent.length; await wait(10);
+    check('terminal success stops page polling', h.sent.length === stoppedAt);
+    h.api.destroy();
+  }
+
+  {
+    const h = fixture('https://xchina.co/photo/id-6664761937f5a.html', '<h1>测试标题</h1>', { pollMs: 2 });
+    h.responses.push({ ok: true, result: { found: true, task: { id: 91, status: 'pending', resource_counts: { total: 2, done: 0 } } } });
+    h.responses.push({ ok: true, result: { id: 91, status: 'failed', progress: 25, resource_counts: { total: 2, done: 0, failed: 1 } } });
+    h.api.init(); await wait(80);
+    check('failed poll renders terminal state and stable retry guidance', /\u5931\u8d25/.test(h.document.querySelector('.sf-xchina-status').textContent) &&
+      /\u67e5\u770b\u5e76\u91cd\u8bd5/.test(h.document.querySelector('[data-sf-collector-next-action]').textContent));
+    const stoppedAt = h.sent.length; await wait(10);
+    check('terminal failure stops page polling', h.sent.length === stoppedAt);
+    h.api.destroy();
+  }
+
+  {
+    const h = fixture('https://xchina.co/photo/id-6664761937f5a.html', '<h1>测试标题</h1>', { pollMs: 2 });
+    let releasePoll;
+    h.responses.push({ ok: true, result: { found: true, task: { id: 92, status: 'pending', resource_counts: { total: 1, done: 0 } } } });
+    h.responses.push(new Promise(resolve => { releasePoll = resolve; }));
+    h.api.init(); await wait(8);
+    check('page polling is single-flight while a status request is pending', h.sent.filter(x => x.type === 'sf_collector_get_task').length === 1);
+    h.window.history.pushState({}, '', '/video/id-6aaee7c9a12e8.html'); h.api.reconcile();
+    releasePoll({ ok: true, result: { id: 92, status: 'success', progress: 100, resource_counts: { total: 1, done: 1 } } });
+    await wait(10);
+    check('navigation cancels polling and ignores stale task responses', h.sent.filter(x => x.type === 'sf_collector_get_task').length === 1 &&
+      !/#92/.test(h.document.querySelector('.sf-xchina-status').textContent));
+    h.api.destroy();
+  }
+
+  {
+    const h = fixture('https://xchina.co/photo/id-6664761937f5a.html', '<h1>测试标题</h1>', { pollMs: 2 }); h.api.init(); await wait();
+    await openReadyPreview(h);
+    h.responses.push({ ok: true, result: { task_id: 93, status: 'pending', disposition: 'created', content_key: 'xchina_gallery:6664761937f5a' } });
+    h.responses.push({ ok: true, result: { id: 93, status: 'success', progress: 100, resource_counts: { total: 1, done: 1 } } });
+    h.document.querySelector('[data-action="confirm"]').click(); await wait(80);
+    check('new active task starts bounded page polling', h.sent.some(x => x.type === 'sf_collector_get_task' && x.task_id === 93) &&
+      /\u5df2\u5b8c\u6210/.test(h.document.querySelector('.sf-xchina-status').textContent));
+    h.api.destroy();
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

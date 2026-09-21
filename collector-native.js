@@ -215,10 +215,23 @@
     });
   }
 
-  function finishNotification(id) {
+  function claimNotification(id, claim) {
+    // Persist the at-most-once delivery claim before calling Chrome. A worker
+    // crash may lose one notification, but a restart must never duplicate it.
     return mutateActive(function (tasks) {
-      if (tasks[String(id)]) tasks[String(id)].terminalNotified = true;
-    }).then(function () {
+      var record = tasks[String(id)];
+      if (!record || record.terminalNotified) return false;
+      record.terminalNotified = true;
+      notifying[id] = claim;
+      return true;
+    });
+  }
+
+  function rollbackNotificationClaim(id, claim) {
+    return mutateActive(function (tasks) {
+      var record = tasks[String(id)];
+      if (notifying[id] !== claim || !record || !record.terminalNotified) return false;
+      record.terminalNotified = false;
       return true;
     });
   }
@@ -229,13 +242,12 @@
     var status = String(task.status || '');
     if (!TERMINAL[status]) return trackTask(task);
     if (notifying[id]) return Promise.resolve(task);
-    notifying[id] = true;
-    return readActive().then(function (tasks) {
-      var record = tasks[String(id)];
-      if (!record) return task;
-      if (record.terminalNotified) return task;
-      return terminalNotification(task).then(function () {
-        return finishNotification(id).then(function () { return task; });
+    var claim = {};
+    notifying[id] = claim;
+    return claimNotification(id, claim).then(function (claimed) {
+      if (!claimed) return task;
+      return terminalNotification(task).then(function () { return task; }, function (error) {
+        return rollbackNotificationClaim(id, claim).then(function () { throw error; });
       });
     }).then(function (result) {
       delete notifying[id];

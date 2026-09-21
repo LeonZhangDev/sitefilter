@@ -28,7 +28,7 @@ function harness(seed) {
   const store = Object.assign({}, seed || {});
   const notices = [];
   const tabs = [];
-  const controls = { failNextGet: false, failNextSet: false, failNextNotification: false };
+  const controls = { failNextGet: false, failNextSet: false, failNextNotification: false, deferNextNotification: false };
   const chrome = {
     runtime: {
       lastError: null,
@@ -66,6 +66,9 @@ function harness(seed) {
     notifications: {
       create(id, options, cb) {
         notices.push({ id, options });
+        if (controls.deferNextNotification) {
+          controls.deferNextNotification = false; controls.deferredNotification = cb; return;
+        }
         if (controls.failNextNotification) {
           controls.failNextNotification = false; chrome.runtime.lastError = { message: 'notification failed' };
           cb(); chrome.runtime.lastError = null; return;
@@ -230,6 +233,21 @@ function backgroundHarness(seed) {
   await failedPoll;
   check('failed notification retains retryable unnotified record',
     notifyFail.store[activeKey]['41'].terminalNotified === false);
+
+  const interrupted = harness({ [activeKey]: {
+    '42': { contentKey: 'xchina_gallery:6664761937f5a', taskId: 42, terminalNotified: false }
+  } });
+  interrupted.controls.deferNextNotification = true;
+  const interruptedPoll = interrupted.bridge.restoreAndPoll(); await wait();
+  reply(interrupted.ports[0], interrupted.ports[0].sent[0], { id: 42, status: 'success', name: 'Claimed' });
+  await wait();
+  check('terminal notification is claimed in storage before browser delivery completes',
+    interrupted.store[activeKey]['42'].terminalNotified === true && interrupted.notices.length === 1);
+  const afterInterruptedWorker = harness(interrupted.store);
+  await afterInterruptedWorker.bridge.restoreAndPoll();
+  check('worker restart after delivery claim cannot notify the terminal task again',
+    afterInterruptedWorker.notices.length === 0 && afterInterruptedWorker.ports.length === 0);
+  void interruptedPoll;
   const retry = harness(notifyFail.store);
   const retryPoll = retry.bridge.restoreAndPoll(); await wait();
   reply(retry.ports[0], retry.ports[0].sent[0], { id: 41, status: 'success', name: 'Album' });

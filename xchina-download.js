@@ -12,6 +12,9 @@
     modalKeydown: null,
     observer: null,
     interval: null,
+    taskPollTimer: null,
+    taskPollInFlight: false,
+    taskPollToken: 0,
     listeners: [],
     lastUrl: '',
     destroyed: false,
@@ -26,6 +29,11 @@
     'recommend-retry': true,
     'recommend-resume': true
   };
+  var TASK_STATES = {
+    pending: true, running: true, extracting: true, downloading: true, paused: true,
+    success: true, partial: true, failed: true, cancelled: true
+  };
+  var TERMINAL_TASK_STATES = { success: true, partial: true, failed: true, cancelled: true };
 
   function protocolError() {
     var error = new Error('Collector 协议响应无效，请重新预览。');
@@ -206,6 +214,7 @@
     if (!isPlainObject(data) || !Number.isSafeInteger(data.task_id) || data.task_id <= 0 ||
       !DISPOSITIONS[data.disposition] || data.content_key !== snapshot.contentKey) throw protocolError();
     if (data.status != null && typeof data.status !== 'string') throw protocolError();
+    if (data.disposition === 'confirm-redownload' && data.status !== 'success') throw protocolError();
     return data;
   }
 
@@ -270,7 +279,7 @@
   }
 
   function validateTask(task) {
-    if (!isPlainObject(task) || !Number.isSafeInteger(task.id) || task.id <= 0 || typeof task.status !== 'string') throw protocolError();
+    if (!isPlainObject(task) || !Number.isSafeInteger(task.id) || task.id <= 0 || !TASK_STATES[task.status]) throw protocolError();
     if (task.resource_counts != null) {
       if (!isPlainObject(task.resource_counts) || Object.keys(task.resource_counts).some(function (key) {
         return !validNonnegativeInteger(task.resource_counts[key]);
@@ -352,6 +361,63 @@
     return true;
   }
 
+  function pollDelay() {
+    var configured = Number(root.__SF_XCHINA_POLL_MS);
+    return Number.isSafeInteger(configured) && configured >= 1 && configured <= 60000 ? configured : 1500;
+  }
+
+  function clearTaskPolling() {
+    state.taskPollToken++;
+    state.taskPollInFlight = false;
+    if (state.taskPollTimer != null) root.clearTimeout(state.taskPollTimer);
+    state.taskPollTimer = null;
+  }
+
+  function applyPolledTask(snapshot, token, task) {
+    if (token !== state.taskPollToken || !isCurrent(snapshot)) return false;
+    validateTask(task);
+    setState(false, taskSummary(task));
+    if (!TERMINAL_TASK_STATES[task.status]) {
+      if (task.status === 'paused') openExistingTask(task.id, '查看并恢复');
+      return true;
+    }
+    clearTaskPolling();
+    if (task.status === 'partial' || task.status === 'failed' || task.status === 'cancelled') {
+      openExistingTask(task.id, '查看并重试');
+    }
+    return false;
+  }
+
+  function startTaskPolling(snapshot, taskId, immediate) {
+    if (!Number.isSafeInteger(taskId) || taskId <= 0 || !isCurrent(snapshot)) return;
+    clearTaskPolling();
+    clearNextAction();
+    var token = state.taskPollToken;
+    function schedule(delay) {
+      if (token !== state.taskPollToken || !isCurrent(snapshot) || state.taskPollTimer != null) return;
+      state.taskPollTimer = root.setTimeout(run, delay);
+    }
+    function run() {
+      state.taskPollTimer = null;
+      if (token !== state.taskPollToken || !isCurrent(snapshot)) return;
+      if (state.busy) { schedule(pollDelay()); return; }
+      if (state.taskPollInFlight) return;
+      state.taskPollInFlight = true;
+      send({ type: 'sf_collector_get_task', task_id: taskId }).then(function (task) {
+        if (token !== state.taskPollToken || !isCurrent(snapshot)) return;
+        state.taskPollInFlight = false;
+        if (applyPolledTask(snapshot, token, task)) schedule(pollDelay());
+      }).catch(function (error) {
+        if (token !== state.taskPollToken || !isCurrent(snapshot)) return;
+        state.taskPollInFlight = false;
+        if (state.busy) { schedule(pollDelay()); return; }
+        clearTaskPolling();
+        showFailure(error, snapshot, state.operationToken, function () { startTaskPolling(snapshot, taskId, true); });
+      });
+    }
+    schedule(immediate ? 0 : pollDelay());
+  }
+
   function restorePage(snapshot) {
     var restoreToken = state.operationToken;
     send({ type: 'sf_collector_restore', content_key: snapshot.contentKey }).then(function (result) {
@@ -360,10 +426,11 @@
       if (!result.found) return;
       var task = validateTask(result.task);
       setState(false, taskSummary(task));
-      if (task.status === 'failed' || task.status === 'cancelled' || task.status === 'partial') {
+      if (!TERMINAL_TASK_STATES[task.status]) {
+        startTaskPolling(snapshot, task.id, false);
+        if (task.status === 'paused') openExistingTask(task.id, '查看并恢复');
+      } else if (task.status === 'failed' || task.status === 'cancelled' || task.status === 'partial') {
         openExistingTask(task.id, '查看并重试');
-      } else if (task.status === 'paused') {
-        openExistingTask(task.id, '查看并恢复');
       }
     }).catch(function (error) {
       if (!isCurrent(snapshot) || state.busy || state.operationToken !== restoreToken) return;
@@ -413,7 +480,7 @@
     addRow(list, '图片', number(fieldValue(data, ['photos', 'image_count', 'images'], 0), 0));
     addRow(list, '视频', number(fieldValue(data, ['videos', 'video_count'], state.page.kind === 'video' ? 1 : 0), 0));
     addRow(list, '预计视频体积', bytesLabel(fieldValue(data, ['video_bytes', 'estimated_video_bytes', 'estimated_size'], 0)));
-    addRow(list, '输出目录', fieldValue(data, ['output_dir', 'download_dir'], '使用 Collector 当前设置'));
+    addRow(list, '输出目录', '使用 Collector 当前设置');
     addRow(list, '媒体策略', mediaLabel(media));
     addRow(list, '计数状态', data.sampled ? '抽样/估算' : '完整预览');
     addRow(list, '复用状态', dispositionLabel(data.disposition));
@@ -460,11 +527,13 @@
         }
         if (result.disposition === 'recommend-resume') {
           closeModal(true);
+          startTaskPolling(bound, result.task_id, false);
           openExistingTask(result.task_id, '查看并恢复');
           setState(false, '任务 #' + result.task_id + ' 已暂停，建议恢复原任务。');
           return;
         }
         closeModal(true);
+        if (TASK_STATES[result.status] && !TERMINAL_TASK_STATES[result.status]) startTaskPolling(bound, result.task_id, true);
       }).catch(function (error) {
         if (!isCurrent(bound, token)) return;
         showFailure(error, bound, token, function () { preview(overlay._media, overlay._opener); });
@@ -571,6 +640,7 @@
 
   function removeControls() {
     state.operationToken++;
+    clearTaskPolling();
     closeModal(false);
     all('[data-sf-xchina]').forEach(function (node) { node.remove(); });
     state.controls = [];
