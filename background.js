@@ -4,6 +4,8 @@
  * ============================================================= */
 'use strict';
 
+if (typeof importScripts === 'function') importScripts('collector-native.js');
+
 var DATA_KEY = 'sf_data_v1';
 var SCHEMA_VERSION = 4;   // 与 content.js / options.js 保持一致
 
@@ -623,8 +625,16 @@ function autoBackup() {
 }
 
 /* ---------------- 消息 ---------------- */
-chrome.runtime.onMessage.addListener(function (msg) {
+chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (!msg) return;
+  if (typeof msg.type === 'string' && msg.type.indexOf('sf_collector_') === 0) {
+    SiteFilterCollectorBridge.routeMessage(msg).then(function (result) {
+      sendResponse({ ok: true, result: result });
+    }).catch(function (e) {
+      sendResponse({ ok: false, error: { code: e.code || 'collector-error', message: e.message || 'Collector 请求失败。', retriable: !!e.retriable } });
+    });
+    return true;
+  }
   try { handleMsg(msg); } catch (e) { logErr('onMessage:' + (msg && msg.type), e); }
 });
 
@@ -780,6 +790,7 @@ function ensureAlarm() {
   try {
     chrome.alarms.create('sf_daily_rec', { periodInMinutes: 1440 });
     chrome.alarms.create('sf_backup', { periodInMinutes: 1440, delayInMinutes: 30 });
+    chrome.alarms.create('sf_collector_tasks', { periodInMinutes: 1 });
   } catch (e) { }
 }
 
@@ -790,20 +801,26 @@ chrome.runtime.onInstalled.addListener(function () {
   buildSimilar();
   purgeExpiredRules();
   buildLearned();
+  SiteFilterCollectorBridge.restoreAndPoll();
 });
 chrome.runtime.onStartup.addListener(function () {
   buildMenus(); ensureAlarm(); purgeExpiredRules().then(function () {
     buildDaily(false); buildSimilar(); buildLearned();
-  }); autoBackup();
+  }); autoBackup(); SiteFilterCollectorBridge.restoreAndPoll();
 });
 
 chrome.alarms.onAlarm.addListener(function (alarm) {
   if (!alarm) return;
   if (alarm.name === 'sf_daily_rec') { purgeExpiredRules().then(function () { buildDaily(false); buildSimilar(); buildLearned(); }); }
   else if (alarm.name === 'sf_backup') autoBackup();
+  else if (alarm.name === 'sf_collector_tasks') SiteFilterCollectorBridge.restoreAndPoll();
 });
 
-chrome.notifications.onClicked.addListener(function () {
+chrome.notifications.onClicked.addListener(function (notificationId) {
+  if (/^sf_collector_task_\d+$/.test(String(notificationId || ''))) {
+    SiteFilterCollectorBridge.openNotification(notificationId).catch(function (e) { logErr('collector.notification', e); });
+    return;
+  }
   try { chrome.runtime.openOptionsPage(); } catch (e) { }
 });
 
