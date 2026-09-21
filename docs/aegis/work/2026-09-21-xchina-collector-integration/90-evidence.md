@@ -90,3 +90,15 @@
 - Race safety: preview/create operations bind an immutable page snapshot plus generation/token; SPA navigation removes the modal and ignores stale results without creating or updating the replacement page.
 - Protocol safety: preview/create envelopes, exact identities, task IDs, dispositions, resource counts, and collector selection are validated before declaring success.
 - Review: final independent specification and code-quality reviews passed with no blocking findings.
+
+## Task 9 — Restoration, Recovery, and Guidance
+
+- SiteFilter commits: `15db51a23470cc8c6a4ce34e7ce936ca2ce8a825`, `670bc7ba7af812370b2e5bdd57751ade33269f00`, and final polling isolation `9b5c79e8d350cda023a97e7cb48c1d8125a22231`.
+- RED: new restore/login/notification assertions initially failed before the runtime/UI handlers existed.
+- GREEN: Native transport passed 37 tests, XChina UI passed 79, and UTF-8 full CI passed 14 suites and 725 assertions with package validation.
+- Collector regression: WSL full pytest passed 658 with one platform skip and one existing warning after restoring the known test-only `httpx2` environment dependency; no Collector source or protocol changed.
+- Recovery: the page restores the latest matching task, continuously polls active tasks with single-flight page/operation isolation, and stops on terminal state, navigation, or teardown.
+- User authority: completed redownload requires a second explicit confirmation before `force_new`; login starts only from an explicit button; missing Host guidance offers install steps and re-detection without opening a management page automatically.
+- Privacy: browser cookies are never exported, and Collector absolute Windows/WSL output paths are validated but replaced with a fixed summary before any page DOM rendering.
+- Notification semantics: a persisted delivery claim precedes notification creation, providing restart-safe at-most-once behavior; a crash in the claim/create gap may omit one notification rather than duplicate it, and explicit creation failure rolls back for retry.
+- Review: final independent specification and code-quality reviews passed with no blocking findings.

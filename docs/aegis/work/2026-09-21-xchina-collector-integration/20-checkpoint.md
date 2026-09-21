@@ -2,13 +2,13 @@
 
 ## TodoCheckpointDraft
 
-- Current todo: Task 9 — complete restoration, login recovery, and user guidance.
-- Active slice: restore minimal persisted tasks, map stable errors to one next action, and expose login only after explicit user action.
-- Completed todos: specification approval, implementation planning, and Tasks 0–8.
-- Pending todos: Tasks 9–10 from the parent implementation plan.
-- Evidence refs: approved requirements/design/plan, SiteFilter commits through `649a13b57c5efb179c577ea0aab1b80fa249fd17`, Collector commits through `f00624723a2090c362fd11236d6b9d164378824b`, and `90-evidence.md`.
-- Blocked on: nothing known for Task 9.
-- Next step: add restoration, completed-task confirmation, retry/resume guidance, host re-detection, explicit login recovery, and documentation.
+- Current todo: Task 10 — run installation and real two-browser acceptance.
+- Active slice: verify host-missing guidance, installed Native Messaging, complete photo/video downloads, notification/deep-link behavior, temporary login recovery, restoration, and idle exit.
+- Completed todos: specification approval, implementation planning, and Tasks 0–9.
+- Pending todos: Task 10 from the parent implementation plan.
+- Evidence refs: approved requirements/design/plan, SiteFilter commits through `9b5c79e8d350cda023a97e7cb48c1d8125a22231`, Collector commits through `f00624723a2090c362fd11236d6b9d164378824b`, and `90-evidence.md`.
+- Blocked on: branded Chrome command-line unpacked-extension restrictions may require interactive user-profile loading; Task 10 must collect direct evidence rather than infer success from Chromium-family probes.
+- Next step: create ignored acceptance records, execute the initial missing-host path, install/reinstall, then complete one real gallery in Chrome and one real video in Edge.
 
 ## Task 0 Evidence
 
@@ -21,7 +21,7 @@
 
 ## ResumeStateHint
 
-Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the parent plan. Confirm both feature worktrees are clean at their recorded commits, then continue with Task 9.
+Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the parent plan. Confirm both feature worktrees are clean at their recorded commits, then continue with Task 10.
 
 ## DriftCheckDraft
 
@@ -30,6 +30,6 @@ Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the par
 - Compatibility boundary: unchanged.
 - New owner/fallback/adapter: only the approved Native Messaging adapter is planned.
 - Retirement track: explicit.
-- Evidence sufficiency: Tasks 0–8 have direct RED/GREEN, immutable commits, cross-platform runtime/protocol/subprocess checks, real per-user installation/browser probes, MV3 lifecycle/notification fault tests, page-bound async race tests, and two-stage review evidence; later tasks still require their own stated gates.
+- Evidence sufficiency: Tasks 0–9 have direct RED/GREEN, immutable commits, cross-platform runtime/protocol/subprocess checks, real per-user installation/browser probes, MV3 lifecycle/notification fault tests, page-bound async race tests, recovery/login fault tests, and two-stage review evidence; final live acceptance is still required.
 - Execution Readiness View: present and aligned.
-- Decision: Task 8 remains a runtime-message-only UI adapter bound to immutable page identity, with strict response validation and zero injection outside supported detail pages; continue to Task 9.
+- Decision: Task 9 preserves minimal storage and explicit user authority for force-new/login actions, with at-most-once terminal notification delivery; continue to Task 10.

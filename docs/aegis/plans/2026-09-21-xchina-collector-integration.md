@@ -292,11 +292,11 @@ Planning is necessary because this change introduces a security-sensitive native
 **Change Necessity:** core transport/UI alone does not close failure and re-entry paths.  
 **Impact/Compatibility:** no automatic browser-cookie transfer or automatic management-page opening.
 
-- [ ] **Write the failing test.** Assert restored latest task on page load, completed redownload confirmation, retry/resume recommendations, install guidance and re-detect, login-required action, all terminal notification types, and no duplicate notification after service-worker restart.
-- [ ] **Verify RED.** Run `node _test_collector_native.js` and `node _test_xchina_download.js`; require the newly added restoration/login assertions to fail before implementation.
-- [ ] **Implement minimal code.** Persist only `{contentKey, taskId, terminalNotified}`; map stable host/Collector error codes to one next action; call `start-login` only after explicit user action; update user documentation and changelog.
-- [ ] **Verify GREEN.** Run `node _test_collector_native.js`, `node _test_xchina_download.js`, `python ci.py --out build-integration-complete`, then run full Collector `uv run pytest -q`.
-- [ ] **Commit.** In SiteFilter run `git add collector-native.js xchina-download.js _test_collector_native.js _test_xchina_download.js README.md CHANGELOG.md && git commit -m "[collector] feat: restore tasks and recover login"`. In Collector run `git add README.md integrations/sitefilter-native-host/README.md && git commit -m "[sitefilter] docs: document native integration"`.
+- [x] **Write the failing test.** Assert restored latest task on page load, completed redownload confirmation, retry/resume recommendations, install guidance and re-detect, login-required action, all terminal notification types, and no duplicate notification after service-worker restart.
+- [x] **Verify RED.** Run `node _test_collector_native.js` and `node _test_xchina_download.js`; require the newly added restoration/login assertions to fail before implementation.
+- [x] **Implement minimal code.** Persist only `{contentKey, taskId, terminalNotified}`; map stable host/Collector error codes to one next action; call `start-login` only after explicit user action; update user documentation and changelog.
+- [x] **Verify GREEN.** Run `node _test_collector_native.js`, `node _test_xchina_download.js`, `python ci.py --out build-integration-complete`, then run full Collector `uv run pytest -q`.
+- [x] **Commit.** In SiteFilter run `git add collector-native.js xchina-download.js _test_collector_native.js _test_xchina_download.js README.md CHANGELOG.md && git commit -m "[collector] feat: restore tasks and recover login"`. In Collector run `git add README.md integrations/sitefilter-native-host/README.md && git commit -m "[sitefilter] docs: document native integration"`.
 
 ### Task 10: Run installation and real two-browser acceptance
 
