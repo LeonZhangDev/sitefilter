@@ -305,11 +305,11 @@ Planning is necessary because this change introduces a security-sensitive native
 **Change Necessity:** runtime verification is required by the approved specification.  
 **Impact/Compatibility:** real downloads are authorized and retained; no cleanup is performed without a separate request.
 
-- [ ] **Write the acceptance checklist.** Record browser/version, extension ID, WSL distribution, selected project, Native Host version, Collector port, task IDs, output directories, expected notification states, and idle timestamps.
-- [ ] **Verify initial RED path.** Uninstall the host, open the approved photo page in Chrome, and confirm visible install guidance; repeat host-missing detection in Edge.
-- [ ] **Execute minimal acceptance.** Install once; in Chrome fully download the approved gallery; in Edge fully download the approved video; exercise preview, repeated click, page reload, and task deep link. With a temporary `UWC_BROWSER_STATE_DIR`, start and stop one WSLg login session to prove the recovery UI without replacing the user's saved state.
-- [ ] **Verify GREEN.** Confirm final task statuses, resource counts, files, hashes/nonzero sizes, playable video via `ffprobe`, one notification per task, no duplicate task, and Collector exit after 30 idle minutes; then reinstall/restart and verify status restoration.
-- [ ] **Commit evidence references only.** Update progress/docs with task IDs, commands, and summarized results without committing adult media, cookies, browser state, absolute private output paths, or generated binaries; use `[integration] test: verify XChina native downloads` in each applicable repository.
+- [x] **Write the acceptance checklist.** Record browser/version, extension ID, WSL distribution, selected project, Native Host version, Collector port, task IDs, output directories, expected notification states, and idle timestamps.
+- [x] **Verify initial RED path.** Uninstall the host, open the approved photo page in Chrome, and confirm visible install guidance; repeat host-missing detection in Edge.
+- [x] **Execute minimal acceptance.** Install once; in Chrome fully download the approved gallery; in Edge fully download the approved video; exercise preview, repeated click, page reload, and task deep link. With a temporary `UWC_BROWSER_STATE_DIR`, start and stop one WSLg login session to prove the recovery UI without replacing the user's saved state.
+- [x] **Verify GREEN.** Confirm final task statuses, resource counts, files, hashes/nonzero sizes, playable video via `ffprobe`, one notification per task, no duplicate task, and Collector exit after 30 idle minutes; then reinstall/restart and verify status restoration. The production 30-minute value was retained and its boundary was exercised with approved short-time injection rather than a blocking 30-minute wait.
+- [x] **Commit evidence references only.** Update progress/docs with task IDs, commands, and summarized results without committing adult media, cookies, browser state, absolute private output paths, or generated binaries; use `[integration] test: verify XChina native downloads` in each applicable repository.
 
 ## Risks
 

@@ -7,3 +7,4 @@ __pycache__/
 .worktrees/
 *.zip
 sitefilter-native-host*.exe
+artifacts/xchina-collector-acceptance/

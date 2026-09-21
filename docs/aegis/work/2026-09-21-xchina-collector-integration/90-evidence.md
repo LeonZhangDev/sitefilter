@@ -102,3 +102,19 @@
 - Privacy: browser cookies are never exported, and Collector absolute Windows/WSL output paths are validated but replaced with a fixed summary before any page DOM rendering.
 - Notification semantics: a persisted delivery claim precedes notification creation, providing restart-safe at-most-once behavior; a crash in the claim/create gap may omit one notification rather than duplicate it, and explicit creation failure rolls back for retry.
 - Review: final independent specification and code-quality reviews passed with no blocking findings.
+
+## Task 10 — Real Chrome and Edge Acceptance
+
+- Environment: branded Chrome 153.0.8010.52, branded Edge 154.0.4258.24, unpacked extension ID `jaihdgjnnpmiabeoefmihmjhoodcjlhf`, Ubuntu on WSL 2, Native Host ownership v3/protocol v1, Collector port 8000.
+- Initial RED: after the safe Host uninstall, the approved photo detail showed visible installation guidance in Chrome and the approved video detail showed the Host-missing state in Edge. No Collector data was removed.
+- Browser workflow: Chrome photo preview/create/repeated-click/reload/deep-link all passed on Task 1; Edge video preview/create/repeated-click/reload/deep-link passed on Task 2. Repeated actions reused the same task. A temporary `UWC_BROWSER_STATE_DIR` started and stopped one WSLg login UI without replacing saved state.
+- Gallery GREEN: Task 1 restored as `success` with 82/82 resources and 42,182,156 bytes. The first and last file SHA-256 values were `54f9c66209ec9b0588e954900495deaee5da8e96434814d69945fb42b47b4c5a` and `f71b12ebc87283a1533183897b41ded1b6abffc43a1b30385066ce0c21b4f60f`.
+- Video defect evidence: the original Task 2 exposed a real false-success path: ffmpeg exited 0 but produced only 270.024853 seconds from a 545-segment, approximately 5,442-second playlist. The incomplete file is retained as user data and is not treated as acceptance success.
+- Video GREEN: normal force-new recovery Task 3 completed 1/1 resources at 789,583,673 bytes with SHA-256 `6dad4dcb5b1430f63d4e5c488bf5da063e8d960107644b029dd52715138b8148`. `ffprobe` reported 5,442.130431 seconds, H.264 1280x720 video, and AAC audio, exceeding the 99% playlist-duration integrity gate.
+- Collector fixes discovered by live acceptance: `cc94d8d` adds browser TLS impersonation for the media CDN; `91e802d` keeps long ffmpeg tasks alive and propagates cancellation; `c72757d` cancels active workers on shutdown; `f0a03ee` rejects truncated HLS output; `2446a04` requires 99% playlist duration; `f6b5999` joins executor workers; `4b58455` bounds Uvicorn SSE graceful shutdown below the installer gate.
+- Shutdown/installer GREEN: the final focused suite passed 68 tests with one platform skip. The normal installer then stopped its staged Collector despite live browser `/events` connections, completed native self-check, and left the Host registered for both Chrome and Edge with an owned/ready runtime.
+- Restoration: after the final installer restart, Tasks 1, 2, and 3 all restored as `success`; Task 1 remained 82/82 and the valid recovery video Task 3 remained 1/1.
+- Notification evidence: the Chrome Task 1 and Edge Task 2 service-worker records each had one persisted `terminalNotified: true` claim. Repeated live inspection found no active duplicate notification and no duplicate task.
+- Idle evidence: three approved short-time injection cases passed in 3.03 seconds while the production Makefile retained `--idle-minutes 30`; this verifies the same boundary mechanism without blocking the acceptance turn for 30 minutes.
+- Privacy: ignored evidence contains no committed media, cookies, saved browser state, absolute private output paths, or binaries. A later site access-control response was not bypassed.
+- Known non-blocking observation: Edge preview estimated the video as 16 bytes; final task creation and integrity were unaffected, but preview-size accuracy remains follow-up work.
