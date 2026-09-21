@@ -188,11 +188,11 @@ Planning is necessary because this change introduces a security-sensitive native
 **Change Necessity:** raw URL equality cannot satisfy FR-5.  
 **Impact/Compatibility:** helper is pure and does not change existing collectors.
 
-- [ ] **Write the failing test.** Add parameterized cases asserting `xchina_gallery:6664761937f5a` for base, `/1.html`, query, and fragment variants; assert `xchina_video:6aaee7c9a12e8` for the video sample; reject non-XChina and malformed IDs.
-- [ ] **Verify RED.** Run `uv run pytest -q tests/test_content_identity.py`; expect import failure for `core.content_identity`.
-- [ ] **Implement minimal code.** Add `canonical_content_key(url: str, collector: str | None = None) -> str | None` using anchored `urllib.parse.urlsplit` path regexes and the resolved collector name; do not fetch the network.
-- [ ] **Verify GREEN.** Run `uv run pytest -q tests/test_content_identity.py tests/test_collector_autoresolve.py` and require all pass.
-- [ ] **Commit.** Run `git add backend/core/content_identity.py tests/test_content_identity.py && git commit -m "[xchina] feat: canonicalize content identity"`.
+- [x] **Write the failing test.** Add parameterized cases asserting `xchina_gallery:6664761937f5a` for base, `/1.html`, query, and fragment variants; assert `xchina_video:6aaee7c9a12e8` for the video sample; reject non-XChina and malformed IDs.
+- [x] **Verify RED.** Run `uv run pytest -q tests/test_content_identity.py`; expect import failure for `core.content_identity`.
+- [x] **Implement minimal code.** Add `canonical_content_key(url: str, collector: str | None = None) -> str | None` using anchored `urllib.parse.urlsplit` path regexes and the resolved collector name; do not fetch the network.
+- [x] **Verify GREEN.** Run `uv run pytest -q tests/test_content_identity.py tests/test_collector_autoresolve.py` and require all pass.
+- [x] **Commit.** Run `git add backend/core/content_identity.py tests/test_content_identity.py && git commit -m "[xchina] feat: canonicalize content identity"`.
 
 ### Task 2: Implement atomic duplicate dispositions
 

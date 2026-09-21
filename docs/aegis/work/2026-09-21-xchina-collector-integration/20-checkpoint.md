@@ -2,13 +2,13 @@
 
 ## TodoCheckpointDraft
 
-- Current todo: Task 1 — add canonical XChina content identity.
-- Active slice: create an isolated feature worktree and begin the Collector identity helper and focused tests.
-- Completed todos: specification approval, implementation planning, and Task 0 repository bootstrap/baseline verification.
-- Pending todos: Tasks 1–10 from the parent implementation plan.
-- Evidence refs: approved requirements, design, baseline, implementation plan, and the Task 0 root commit `[repo] chore: establish project baseline`.
-- Blocked on: nothing known for Task 1.
-- Next step: create the planned isolated feature worktree, then dispatch Task 1.
+- Current todo: Task 2 — implement atomic duplicate dispositions.
+- Active slice: extend Collector persistence and task creation around the canonical identity owner established by Task 1.
+- Completed todos: specification approval, implementation planning, Task 0 repository bootstrap/baseline verification, and Task 1 canonical XChina content identity.
+- Pending todos: Tasks 2–10 from the parent implementation plan.
+- Evidence refs: approved requirements/design/plan, Task 0 baseline evidence below, Collector commit `5b4ef98429b40decffbf595e542c5a712e369a7a`, and `90-evidence.md`.
+- Blocked on: nothing known for Task 2.
+- Next step: dispatch the Task 2 implementer with the exact schema/API compatibility boundary and atomicity tests.
 
 ## Task 0 Evidence
 
@@ -21,7 +21,7 @@
 
 ## ResumeStateHint
 
-Resume by reading `10-intent.md`, this checkpoint, and the parent plan. Confirm the independent SiteFilter repository is clean on `main`, create the isolated feature worktree required after the bootstrap exception, and continue with Task 1.
+Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the parent plan. Confirm both `codex/xchina-collector-integration` worktrees are clean at their recorded commits, then continue with Task 2.
 
 ## DriftCheckDraft
 
@@ -30,6 +30,6 @@ Resume by reading `10-intent.md`, this checkpoint, and the parent plan. Confirm 
 - Compatibility boundary: unchanged.
 - New owner/fallback/adapter: only the approved Native Messaging adapter is planned.
 - Retirement track: explicit.
-- Evidence sufficiency: Task 0 has direct RED/GREEN, commit, clean-tree, and repository-boundary evidence; later tasks still require their own stated gates.
+- Evidence sufficiency: Tasks 0 and 1 have direct RED/GREEN, immutable commit, clean-tree, and two-stage review evidence; later tasks still require their own stated gates.
 - Execution Readiness View: present and aligned.
-- Decision: Task 0 introduced no design drift; continue to Task 1 in an isolated feature worktree.
+- Decision: Task 1 remained inside Collector ownership and introduced no network, API, persistence, or extension drift; continue to Task 2.
