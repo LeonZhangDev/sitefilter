@@ -794,6 +794,10 @@ function ensureAlarm() {
   } catch (e) { }
 }
 
+function pollCollectorTasks() {
+  SiteFilterCollectorBridge.restoreAndPoll().catch(function (e) { logErr('collector.poll', e); });
+}
+
 chrome.runtime.onInstalled.addListener(function () {
   getData().then(function (d) { return setData(d); }).then(buildMenus);
   ensureAlarm();
@@ -801,19 +805,19 @@ chrome.runtime.onInstalled.addListener(function () {
   buildSimilar();
   purgeExpiredRules();
   buildLearned();
-  SiteFilterCollectorBridge.restoreAndPoll();
+  pollCollectorTasks();
 });
 chrome.runtime.onStartup.addListener(function () {
   buildMenus(); ensureAlarm(); purgeExpiredRules().then(function () {
     buildDaily(false); buildSimilar(); buildLearned();
-  }); autoBackup(); SiteFilterCollectorBridge.restoreAndPoll();
+  }); autoBackup(); pollCollectorTasks();
 });
 
 chrome.alarms.onAlarm.addListener(function (alarm) {
   if (!alarm) return;
   if (alarm.name === 'sf_daily_rec') { purgeExpiredRules().then(function () { buildDaily(false); buildSimilar(); buildLearned(); }); }
   else if (alarm.name === 'sf_backup') autoBackup();
-  else if (alarm.name === 'sf_collector_tasks') SiteFilterCollectorBridge.restoreAndPoll();
+  else if (alarm.name === 'sf_collector_tasks') pollCollectorTasks();
 });
 
 chrome.notifications.onClicked.addListener(function (notificationId) {
