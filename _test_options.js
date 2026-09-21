@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 
-const EXT = 'C:\\Users\\admin\\Desktop\\site-filter';
+const EXT = __dirname;
 const html = fs.readFileSync(path.join(EXT, 'options.html'), 'utf8');
 const js = fs.readFileSync(path.join(EXT, 'options.js'), 'utf8');
 
