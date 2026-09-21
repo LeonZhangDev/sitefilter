@@ -2,13 +2,13 @@
 
 ## TodoCheckpointDraft
 
-- Current todo: none; Task 10 real two-browser acceptance is complete.
-- Active slice: final evidence and clean-worktree handoff.
-- Completed todos: specification approval, implementation planning, and Tasks 0–10.
-- Pending todos: none from the parent implementation plan.
-- Evidence refs: approved requirements/design/plan, SiteFilter commits through `9b5c79e8d350cda023a97e7cb48c1d8125a22231`, Collector acceptance fixes through `4b58455`, and `90-evidence.md`.
-- Blocked on: none. Branded Chrome and Edge were both exercised with their unpacked extension profiles.
-- Next step: optional follow-up for inaccurate video preview byte estimation; it did not affect task creation or output integrity.
+- Current todo: Task 10 data-retention clarification remains open; do not mark the overall acceptance complete.
+- Active slice: preserve Task 4 and hand off the missing Task 1–3 evidence accurately.
+- Completed todos: specification approval, implementation planning, Tasks 0–9, Task 10 browser/output checks, and final code-quality review.
+- Pending todos: user clarification for the missing Task 1–3 records/output directories; no recovery or re-download is authorized.
+- Evidence refs: approved requirements/design/plan, SiteFilter commits through `a94eced`, Collector acceptance fixes through `065d4a4` and `81ca318`, and `90-evidence.md`.
+- Blocked on: only the data-retention acceptance item. Branded Chrome and Edge workflows, Task 4 output integrity, notifications, restart behavior, and the normal installer passed.
+- Next step: obtain user clarification, then decide whether the data-retention gate can close. Preview byte-estimate accuracy remains an optional follow-up.
 
 ## Task 0 Evidence
 
@@ -21,7 +21,7 @@
 
 ## ResumeStateHint
 
-Task 10 is complete. Read `90-evidence.md` for the live task IDs, output integrity summary, focused fixes, and remaining non-blocking observation.
+Task 10 is not fully closed. Read `90-evidence.md` for the previously verified Tasks 1–3, retained Task 4, focused fixes, and the open data-retention item.
 
 ## DriftCheckDraft
 
@@ -30,6 +30,6 @@ Task 10 is complete. Read `90-evidence.md` for the live task IDs, output integri
 - Compatibility boundary: unchanged.
 - New owner/fallback/adapter: only the approved Native Messaging adapter is planned.
 - Retirement track: explicit.
-- Evidence sufficiency: Tasks 0–10 have direct RED/GREEN, immutable commits, cross-platform runtime/protocol/subprocess checks, real per-user installation/browser probes, complete real gallery/video outputs, MV3 lifecycle/notification evidence, WSLg recovery proof, restart restoration, and final installer self-check.
+- Evidence sufficiency: code and browser behavior have direct RED/GREEN, immutable commits, cross-platform runtime/protocol/subprocess checks, real per-user installation/browser probes, verified gallery/video outputs, MV3 lifecycle/notification evidence, WSLg recovery proof, restart restoration, and final installer self-check. Current retention of Tasks 1–3 is not established.
 - Execution Readiness View: present and aligned.
-- Decision: Task 10 passed. Retain the final Host installation and downloaded user data; do not clean either without a separate request.
+- Decision: Task 10 code/browser checks passed, but overall acceptance remains open on data retention. Retain the final Host installation and Task 4; do not clean, recover, or re-download without a separate request.
