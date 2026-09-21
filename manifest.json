@@ -44,7 +44,8 @@
       ],
       "js": [
         "expr.js",
-        "content.js"
+        "content.js",
+        "xchina-download.js"
       ],
       "css": [
         "content.css"

@@ -45,6 +45,7 @@ INCLUDE_FILES = [
     'collector-native.js',
     'expr.js',
     'content.js',
+    'xchina-download.js',
     'content.css',
     'popup.html',
     'popup.js',
@@ -60,7 +61,7 @@ EXCLUDE_RE = re.compile(r'(^|[\\/])(_|test|tests|dist|\.git|node_modules|.*\.py$
 # 语法检查覆盖的 JS（含测试，测试写坏了也是问题）
 JS_FILES = [
     'manifest.json',   # 单独 json 校验
-    'expr.js', 'content.js', 'background.js', 'collector-native.js', 'popup.js', 'options.js',
+    'expr.js', 'content.js', 'xchina-download.js', 'background.js', 'collector-native.js', 'popup.js', 'options.js',
 ]
 
 

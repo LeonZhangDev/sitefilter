@@ -390,3 +390,36 @@ html.cf-boss .cf-host {
 .cf-dbg-tag.dim { opacity: .65; }
 .cf-dbg-exp { margin-top: 3px; color: #fbbf24; }
 .cf-dbg-empty { padding: 12px; color: #5d6580; text-align: center; }
+
+/* XChina -> Collector controls (page and accessible preview modal). */
+.sf-xchina-controls { display: inline-flex; flex-direction: column; gap: 5px; margin: 6px 8px; position: relative; z-index: 2147483500; font: 13px/1.4 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; color: #e9eef8; }
+.sf-xchina-control-row { display: flex; gap: 3px; }
+.sf-xchina-controls button { border: 1px solid rgba(85, 214, 255, .65); border-radius: 7px; background: #172433; color: #eafaff; padding: 7px 11px; cursor: pointer; font: inherit; }
+.sf-xchina-controls button:hover:not(:disabled), .sf-xchina-controls button:focus-visible { background: #20384d; outline: 2px solid #55d6ff; outline-offset: 2px; }
+.sf-xchina-controls button:disabled { cursor: wait; opacity: .6; }
+.sf-xchina-menu-toggle { padding-inline: 8px !important; }
+.sf-xchina-menu { position: absolute; top: 100%; right: 0; min-width: 160px; padding: 4px; border: 1px solid rgba(140, 190, 220, .45); border-radius: 8px; background: #101923; box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
+.sf-xchina-menu[hidden] { display: none; }
+.sf-xchina-menu button { display: block; width: 100%; text-align: left; border: 0; background: transparent; }
+.sf-xchina-status { max-width: 290px; color: #9ee6ff; font-size: 12px; overflow-wrap: anywhere; }
+.sf-xchina-modal { position: fixed; inset: 0; z-index: 2147483646; display: grid; place-items: center; padding: 18px; background: rgba(0, 0, 0, .72); font: 14px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; color: #e9eef8; }
+.sf-xchina-modal-card { width: min(560px, calc(100vw - 36px)); max-height: calc(100vh - 36px); overflow: auto; box-sizing: border-box; padding: 20px; border: 1px solid rgba(120, 205, 235, .55); border-radius: 12px; background: #111b26; box-shadow: 0 18px 60px rgba(0, 0, 0, .6); }
+.sf-xchina-modal-card h2 { margin: 0 0 14px; color: #fff; font-size: 20px; }
+.sf-xchina-preview-list { margin: 0; }
+.sf-xchina-preview-row { display: grid; grid-template-columns: 9em 1fr; gap: 8px; padding: 6px 0; border-bottom: 1px solid rgba(255, 255, 255, .09); }
+.sf-xchina-preview-row dt { color: #a8bdd0; }
+.sf-xchina-preview-row dd { margin: 0; overflow-wrap: anywhere; }
+.sf-xchina-preview-row.sf-xchina-warning dd { color: #ffd27a; }
+.sf-xchina-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.sf-xchina-modal-actions button { border: 1px solid #6d8296; border-radius: 7px; background: #1a2836; color: #fff; padding: 8px 14px; cursor: pointer; }
+.sf-xchina-modal-actions .sf-xchina-confirm { border-color: #45cef7; background: #126b88; }
+.sf-xchina-modal-actions button:focus-visible { outline: 3px solid #7de2ff; outline-offset: 2px; }
+
+@media (prefers-color-scheme: light) {
+  .sf-xchina-controls { color: #102335; }
+  .sf-xchina-controls button { background: #edf8fc; color: #102335; border-color: #168ab2; }
+  .sf-xchina-menu { background: #fff; }
+  .sf-xchina-modal-card { background: #f8fcff; color: #142536; border-color: #188db5; }
+  .sf-xchina-modal-card h2 { color: #102335; }
+  .sf-xchina-preview-row { border-color: rgba(15, 55, 80, .15); }
+}

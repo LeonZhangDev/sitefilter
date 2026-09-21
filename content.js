@@ -1459,7 +1459,19 @@
     '.cf-wcard .wbtns{display:flex;gap:4px;margin-top:5px;}',
     '.cf-wcard .wbtns .cf-mini{flex:1;padding:3px 0;font-size:10px;text-align:center;text-decoration:none;line-height:1.5;}',
     '.cf-prio{flex:none;font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(255,77,109,.18);color:#ffb3c1;}',
-    '.cf-prio.seen{background:rgba(122,131,153,.22);color:#aab2c6;}'
+    '.cf-prio.seen{background:rgba(122,131,153,.22);color:#aab2c6;}',
+    /* XChina Collector 插槽位于 Shadow DOM，样式需随面板本体注入。 */
+    '.cf-xchina-panel-slot:empty{display:none;}',
+    '.cf-xchina-panel-slot{padding:7px 8px;border-bottom:1px solid rgba(255,255,255,.08);}',
+    '.cf-xchina-panel-slot .sf-xchina-controls{display:flex;flex-direction:column;gap:4px;margin:0;position:relative;color:#dfe4ef;font:12px/1.4 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}',
+    '.cf-xchina-panel-slot .sf-xchina-control-row{display:flex;gap:3px;}',
+    '.cf-xchina-panel-slot button{border:1px solid rgba(85,214,255,.65);border-radius:6px;background:#172433;color:#eafaff;padding:6px 9px;cursor:pointer;font:inherit;}',
+    '.cf-xchina-panel-slot .sf-xchina-primary{flex:1;}',
+    '.cf-xchina-panel-slot button:disabled{cursor:wait;opacity:.6;}',
+    '.cf-xchina-panel-slot .sf-xchina-menu{position:absolute;top:100%;right:0;z-index:5;min-width:150px;padding:4px;border:1px solid rgba(140,190,220,.45);border-radius:7px;background:#101923;box-shadow:0 8px 24px rgba(0,0,0,.45);}',
+    '.cf-xchina-panel-slot .sf-xchina-menu[hidden]{display:none;}',
+    '.cf-xchina-panel-slot .sf-xchina-menu button{display:block;width:100%;border:0;text-align:left;background:transparent;}',
+    '.cf-xchina-panel-slot .sf-xchina-status{color:#9ee6ff;font-size:11px;overflow-wrap:anywhere;}'
   ].join('');
 
   function buildUI() {
@@ -1488,6 +1500,7 @@
       '    <label data-tg="boss"><input type="checkbox" data-cb="boss">老板键</label>',
       '  </div>',
       '  <div class="cf-st" id="stats"></div>',
+      '  <div class="cf-xchina-panel-slot" id="collectorSlot"></div>',
       '  <div class="cf-searchwrap"><input id="search" class="cf-search" placeholder="🔍 全局搜索：女优 / 标签 / 番号 / 规则…" /></div>',
       '  <div class="cf-filter" id="filter">',
       '    <span class="fl">筛选</span>',
@@ -1562,7 +1575,7 @@
       dots.appendChild(d);
     });
 
-    ui = { host: host, sr: sr, ball: ball, panel: panel, list: list, stats: statsEl, qin: qin, qtype: qtype, dots: dots, tabs: tabsEl, tabDefs: TABS, flRating: flRating, flDate: flDate, importBtn: importBtn, search: searchEl, warn: warnEl, pick: pickEl };
+    ui = { host: host, sr: sr, ball: ball, panel: panel, list: list, stats: statsEl, collectorSlot: sr.getElementById('collectorSlot'), qin: qin, qtype: qtype, dots: dots, tabs: tabsEl, tabDefs: TABS, flRating: flRating, flDate: flDate, importBtn: importBtn, search: searchEl, warn: warnEl, pick: pickEl };
 
     flRating.addEventListener('change', applyFilter);
     flDate.addEventListener('change', applyFilter);
