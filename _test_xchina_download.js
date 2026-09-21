@@ -382,6 +382,80 @@ async function run() {
     h.api.destroy();
   }
 
+  async function activePollHarness(taskId) {
+    const h = fixture('https://xchina.co/photo/id-6664761937f5a.html', '<h1>测试标题</h1>', { pollMs: 2 });
+    let releasePoll;
+    h.responses.push({ ok: true, result: { found: true, task: { id: taskId, status: 'downloading', resource_counts: { total: 3, done: 1 } } } });
+    h.responses.push(new Promise(resolve => { releasePoll = resolve; }));
+    h.api.init(); await wait(15);
+    return { h, releasePoll };
+  }
+
+  {
+    const { h, releasePoll } = await activePollHarness(101);
+    let releasePreview;
+    h.responses.push(new Promise(resolve => { releasePreview = resolve; }));
+    h.document.querySelector('.sf-xchina-primary').click(); await wait();
+    releasePoll({ ok: true, result: { id: 101, status: 'success', progress: 100, resource_counts: { total: 3, done: 3 } } });
+    await wait();
+    check('in-flight poll cannot overwrite a newer preview operation', h.document.querySelector('.sf-xchina-primary').disabled &&
+      /\u6b63\u5728\u542f\u52a8 Collector \u5e76\u9884\u89c8/.test(h.document.querySelector('.sf-xchina-status').textContent));
+    h.responses.push({ ok: true, result: { id: 101, status: 'success', progress: 100, resource_counts: { total: 3, done: 3 } } });
+    releasePreview({ ok: true, result: { collector: 'xchina_gallery', group: 'A', media: ['image', 'video'], photos: 1, videos: 0, sampled: false } });
+    await wait(80);
+    check('polling safely resumes after preview completes', h.sent.filter(x => x.type === 'sf_collector_get_task').length === 2);
+    h.api.destroy();
+  }
+
+  {
+    const { h, releasePoll } = await activePollHarness(102);
+    h.responses.push({ ok: false, error: { code: 'login-required', message: 'login', retriable: false } });
+    h.document.querySelector('.sf-xchina-primary').click(); await wait();
+    let releaseLogin;
+    h.responses.push(new Promise(resolve => { releaseLogin = resolve; }));
+    h.document.querySelector('[data-sf-collector-next-action]').click(); await wait();
+    releasePoll({ ok: true, result: { id: 102, status: 'success', progress: 100, resource_counts: { total: 3, done: 3 } } });
+    await wait();
+    check('in-flight poll cannot overwrite an explicit login operation', h.document.querySelector('.sf-xchina-primary').disabled &&
+      /\u6b63\u5728\u542f\u52a8 Collector \u767b\u5f55\u7a97\u53e3/.test(h.document.querySelector('.sf-xchina-status').textContent));
+    h.responses.push({ ok: true, result: { id: 102, status: 'success', progress: 100, resource_counts: { total: 3, done: 3 } } });
+    releaseLogin({ ok: true, result: { started: true } }); await wait(80);
+    check('polling safely resumes after login launch completes', h.sent.filter(x => x.type === 'sf_collector_get_task').length === 2);
+    h.api.destroy();
+  }
+
+  {
+    const { h, releasePoll } = await activePollHarness(103);
+    await openReadyPreview(h);
+    h.responses.push({ ok: true, result: { task_id: 103, status: 'failed', disposition: 'recommend-retry', content_key: 'xchina_gallery:6664761937f5a' } });
+    h.document.querySelector('[data-action="confirm"]').click(); await wait();
+    let releaseOpen;
+    h.responses.push(new Promise(resolve => { releaseOpen = resolve; }));
+    h.document.querySelector('[data-sf-collector-next-action]').click(); await wait();
+    releasePoll({ ok: true, result: { id: 103, status: 'success', progress: 100, resource_counts: { total: 3, done: 3 } } }); await wait();
+    check('in-flight poll cannot overwrite an explicit open-task operation', h.document.querySelector('.sf-xchina-primary').disabled &&
+      /\u6b63\u5728\u6253\u5f00 Collector \u4efb\u52a1/.test(h.document.querySelector('.sf-xchina-status').textContent));
+    h.responses.push({ ok: true, result: { id: 103, status: 'success', progress: 100, resource_counts: { total: 3, done: 3 } } });
+    releaseOpen({ ok: true, result: { opened: true } }); await wait(80);
+    check('polling safely resumes after open-task completes', h.sent.filter(x => x.type === 'sf_collector_get_task').length === 2);
+    h.api.destroy();
+  }
+
+  {
+    const { h, releasePoll } = await activePollHarness(104);
+    await openReadyPreview(h);
+    let releaseCreate;
+    h.responses.push(new Promise(resolve => { releaseCreate = resolve; }));
+    h.document.querySelector('[data-action="confirm"]').click(); await wait();
+    releasePoll({ ok: true, result: { id: 104, status: 'success', progress: 100, resource_counts: { total: 3, done: 3 } } }); await wait();
+    check('in-flight poll cannot overwrite a newer create operation', h.document.querySelector('.sf-xchina-primary').disabled &&
+      /\u6b63\u5728\u521b\u5efa Collector \u4efb\u52a1/.test(h.document.querySelector('.sf-xchina-status').textContent));
+    h.responses.push({ ok: true, result: { id: 105, status: 'success', progress: 100, resource_counts: { total: 1, done: 1 } } });
+    releaseCreate({ ok: true, result: { task_id: 105, status: 'pending', disposition: 'created', content_key: 'xchina_gallery:6664761937f5a' } }); await wait(80);
+    check('newly created task replaces stale polling safely', h.sent.some(x => x.type === 'sf_collector_get_task' && x.task_id === 105));
+    h.api.destroy();
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 }

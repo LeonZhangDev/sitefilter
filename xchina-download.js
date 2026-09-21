@@ -403,14 +403,22 @@
       if (state.busy) { schedule(pollDelay()); return; }
       if (state.taskPollInFlight) return;
       state.taskPollInFlight = true;
+      var requestOperationToken = state.operationToken;
       send({ type: 'sf_collector_get_task', task_id: taskId }).then(function (task) {
         if (token !== state.taskPollToken || !isCurrent(snapshot)) return;
         state.taskPollInFlight = false;
+        if (requestOperationToken !== state.operationToken || state.busy) {
+          schedule(pollDelay());
+          return;
+        }
         if (applyPolledTask(snapshot, token, task)) schedule(pollDelay());
       }).catch(function (error) {
         if (token !== state.taskPollToken || !isCurrent(snapshot)) return;
         state.taskPollInFlight = false;
-        if (state.busy) { schedule(pollDelay()); return; }
+        if (requestOperationToken !== state.operationToken || state.busy) {
+          schedule(pollDelay());
+          return;
+        }
         clearTaskPolling();
         showFailure(error, snapshot, state.operationToken, function () { startTaskPolling(snapshot, taskId, true); });
       });
