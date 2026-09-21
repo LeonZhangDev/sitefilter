@@ -4,5 +4,6 @@ build*/
 .playwright-cli/
 __pycache__/
 .workbuddy/memory/
+.worktrees/
 *.zip
 sitefilter-native-host*.exe
