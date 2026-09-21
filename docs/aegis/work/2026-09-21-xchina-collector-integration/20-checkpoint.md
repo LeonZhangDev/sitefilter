@@ -2,13 +2,13 @@
 
 ## TodoCheckpointDraft
 
-- Current todo: Task 3 — expose task summary and management deep links.
-- Active slice: add a compact Collector task-summary contract and query-driven frontend selection without moving task truth into the extension.
-- Completed todos: specification approval, implementation planning, and Tasks 0–2.
-- Pending todos: Tasks 3–10 from the parent implementation plan.
-- Evidence refs: approved requirements/design/plan, Collector commits `5b4ef98429b40decffbf595e542c5a712e369a7a` and `c95cfbdc7084f47849ca4331657e636fe5ab9c8f`, and `90-evidence.md`.
-- Blocked on: nothing known for Task 3.
-- Next step: dispatch the Task 3 implementer with exact API summary fields, frontend query behavior, and focused tests.
+- Current todo: Task 4 — add native startup and idle supervision.
+- Active slice: add a silent Collector startup target plus ownership-aware idle shutdown policy.
+- Completed todos: specification approval, implementation planning, and Tasks 0–3.
+- Pending todos: Tasks 4–10 from the parent implementation plan.
+- Evidence refs: approved requirements/design/plan, Collector commits through `39dc5752ac48208b3f9850b05a59597e7354f827`, and `90-evidence.md`.
+- Blocked on: nothing known for Task 4.
+- Next step: dispatch Task 4 with process ownership, active/paused/watch protection, and 30-minute idle constraints.
 
 ## Task 0 Evidence
 
@@ -21,7 +21,7 @@
 
 ## ResumeStateHint
 
-Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the parent plan. Confirm both feature worktrees are clean at their recorded commits, then continue with Task 3.
+Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the parent plan. Confirm both feature worktrees are clean at their recorded commits, then continue with Task 4.
 
 ## DriftCheckDraft
 
@@ -30,6 +30,6 @@ Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the par
 - Compatibility boundary: unchanged.
 - New owner/fallback/adapter: only the approved Native Messaging adapter is planned.
 - Retirement track: explicit.
-- Evidence sufficiency: Tasks 0–2 have direct RED/GREEN, immutable commits, clean-tree, and two-stage review evidence; later tasks still require their own stated gates.
+- Evidence sufficiency: Tasks 0–3 have direct RED/GREEN, immutable commits, clean-tree, and two-stage review evidence; later tasks still require their own stated gates.
 - Execution Readiness View: present and aligned.
-- Decision: Task 2 kept canonical identity and disposition ownership in Collector, preserved normal-create compatibility, and introduced no schema migration or cross-process contract drift; continue to Task 3.
+- Decision: Task 3 kept task truth in Collector, added only backward-compatible summary fields and query-driven selection, and introduced no transport or extension drift; continue to Task 4.

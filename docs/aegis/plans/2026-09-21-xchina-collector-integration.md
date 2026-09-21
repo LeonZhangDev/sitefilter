@@ -214,11 +214,11 @@ Planning is necessary because this change introduces a security-sensitive native
 **Change Necessity:** current `TaskOut` lacks resource counts and the frontend ignores `?task=`.  
 **Impact/Compatibility:** fields are additive; root UI remains unchanged without a query parameter.
 
-- [ ] **Write the failing test.** In `tests/test_task_summary.py`, assert `GET /tasks/{id}` includes `resource_counts` with total/done/failed/filtered. In `frontend/scripts/test-task-query.mjs`, import `selectTaskFromSearch(search, tasks)` and assert `?task=12` selects task 12 while missing, nonnumeric, and unknown IDs return null.
-- [ ] **Verify RED.** Run `uv run pytest -q tests/test_task_summary.py` and `cd frontend; node scripts/test-task-query.mjs`; expect the API field and module to be absent.
-- [ ] **Implement minimal code.** Add a grouped resource-status count query, expose it on task detail, implement `selectTaskFromSearch` in `task-query.mjs`, and call it from `onMounted` after `refresh()` to set `selectedId`; add `"test:task-query": "node scripts/test-task-query.mjs"` to `frontend/package.json`.
-- [ ] **Verify GREEN.** Run `uv run pytest -q tests/test_task_summary.py`; then run `cd frontend; npm run test:task-query; npm run build`. Start Collector, create a task through the API, store its returned ID in PowerShell variable `$taskId`, then open `Start-Process "http://127.0.0.1:8000/?task=$taskId"` and confirm that row is selected.
-- [ ] **Commit.** Run `git add backend/models/schemas.py backend/api/tasks.py backend/core/database.py frontend/src/App.vue frontend/src/task-query.mjs frontend/scripts/test-task-query.mjs frontend/package.json tests/test_task_summary.py && git commit -m "[tasks] feat: expose task summaries and deep links"`.
+- [x] **Write the failing test.** In `tests/test_task_summary.py`, assert `GET /tasks/{id}` includes `resource_counts` with total/done/failed/filtered. In `frontend/scripts/test-task-query.mjs`, import `selectTaskFromSearch(search, tasks)` and assert `?task=12` selects task 12 while missing, nonnumeric, and unknown IDs return null.
+- [x] **Verify RED.** Run `uv run pytest -q tests/test_task_summary.py` and `cd frontend; node scripts/test-task-query.mjs`; expect the API field and module to be absent.
+- [x] **Implement minimal code.** Add a grouped resource-status count query, expose it on task detail, implement `selectTaskFromSearch` in `task-query.mjs`, and call it from `onMounted` after `refresh()` to set `selectedId`; add `"test:task-query": "node scripts/test-task-query.mjs"` to `frontend/package.json`.
+- [x] **Verify GREEN.** Run `uv run pytest -q tests/test_task_summary.py`; then run `cd frontend; npm run test:task-query; npm run build`. Start Collector, create a task through the API, store its returned ID in PowerShell variable `$taskId`, then open `Start-Process "http://127.0.0.1:8000/?task=$taskId"` and confirm that row is selected.
+- [x] **Commit.** Run `git add backend/models/schemas.py backend/api/tasks.py backend/core/database.py frontend/src/App.vue frontend/src/task-query.mjs frontend/scripts/test-task-query.mjs frontend/package.json tests/test_task_summary.py && git commit -m "[tasks] feat: expose task summaries and deep links"`.
 
 ### Task 4: Add native startup and idle supervision
 

@@ -30,3 +30,12 @@
 - Compatibility: non-deduplicated callers remain always-create; canonical keys stay inside task options with no migration; caller-supplied keys are stripped and stored keys are recomputed.
 - Review: independent specification and quality re-reviews passed with no Critical or Important findings.
 - Residual risk: existing `TaskManager.submit()` can retain an in-memory `_active` entry if its executor rejects submission. Database state is changed to `failed`, so the disposition contract remains correct; cleanup inside `TaskManager` is outside Task 2's approved file boundary.
+
+## Task 3 — Task Summary and Deep Links
+
+- Collector commit: `39dc5752ac48208b3f9850b05a59597e7354f827` (`[tasks] feat: expose task summaries and deep links`).
+- Backend: focused task-summary tests passed; full suite passed 562 tests with one existing warning.
+- Frontend: task-query tests and production build passed; committed coverage includes missing, nonnumeric, unknown, unsafe-integer, decimal, and negative query IDs.
+- Browser evidence: isolated task creation and `/?task=1` selected the matching row and rendered detail; `/` retained the unselected root behavior. Only owned processes and artifacts were cleaned afterward.
+- Review: independent specification and quality reviews passed with no open findings.
+- Existing environment notes: Vite CJS deprecation warning and npm audit findings (one moderate, one high) predate this dependency-free task.
