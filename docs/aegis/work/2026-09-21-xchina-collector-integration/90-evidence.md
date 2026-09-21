@@ -57,3 +57,14 @@
 - Security evidence: exact six-action and origin allowlists, strict config/payload types, bounded response/discovery/descriptor reads, no redirects, query/fragment stripping before forwarding, secret-free categorical logging, strict JSON numbers/depth, and early launcher-exit detection.
 - Compatibility: preview timeout is 150 seconds, covering the existing two-attempt 110-second path with margin; Host capability discovery matches the live Collector config shape.
 - Review: independent specification and final security-quality reviews passed with no open findings.
+
+## Task 6 — Guided Native Host Installation
+
+- Collector commits: `cb1c0f38fa86b08cce295bde7aa9c14907bd152b`, `f4ce72168f479a903a5cb53c492aa9c8eaaea27b`, `3b788145af0cbe0098ea7119b54fa6e4f2533ce8`, `487fca8775a4a437a22f1077354e2c0002de95c9`, and final hardening `f00624723a2090c362fd11236d6b9d164378824b`.
+- Runtime compatibility follow-up: `6786e9d1c066f8af0c1dd851489f3485fef61bf9` resolves an absolute WSL user `uv` path for native startup without changing normal `make start` behavior.
+- Disposable verification: the complete installer harness passed under PowerShell 7 and Windows PowerShell 5.1, including zero-side-effect `-WhatIf` and rejected confirmation, exact owned-file/registry scope, idempotent removal, reparse rejection, transactional rollback, concurrent registry preservation, strict response rejection, and bounded no-output/partial-frame self-checks.
+- Process safety: install/remove uses Linux pidfds to bind identity before exact cwd/executable/NUL-argv verification and TERM; unsupported pidfd APIs fail closed with no raw-PID fallback.
+- Supply chain: Windows `uv` is pinned to 0.12.15 with a fixed SHA-256; WSL provisioning requires a preinstalled, version-verifiable `uv` and executes no mutable remote installer script.
+- Real lifecycle: install, stopped-state startup, self-check failure after a new Collector start, cleanup, old-root/registry/runtime restoration, `-WhatIf`, uninstall, second idempotent uninstall, and full-provision reinstall all passed without elevation or Collector-data deletion.
+- Browser bridge: strict Native Messaging ping passed in Chromium 153 and Edge 154 with the deterministic extension ID `jaihdgjnnpmiabeoefmihmjhoodcjlhf`; branded Chrome unpacked-extension acceptance remains explicitly assigned to Task 10.
+- Regression: `tests/test_sitefilter_native_host.py` passed 74 tests after final installation; both final independent specification and security-quality reviews passed with no blocking findings.

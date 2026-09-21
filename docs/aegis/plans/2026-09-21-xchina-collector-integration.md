@@ -253,11 +253,11 @@ Planning is necessary because this change introduces a security-sensitive native
 **Change Necessity:** browser host registration cannot be performed by the extension itself.  
 **Impact/Compatibility:** use only `%LOCALAPPDATA%` and HKCU; never delete Collector data.
 
-- [ ] **Write the failing test.** Add `-WhatIf`, `-ProjectPath`, and `-SkipProvision` modes and a test harness using temporary registry names; assert project validation, WSL path conversion, Chrome/Edge manifest entries, exact allowed origin, config permissions, idempotent reinstall, and uninstall scope.
-- [ ] **Verify RED.** Run PowerShell in `-WhatIf` mode; expect the installer scripts to be absent.
-- [ ] **Implement minimal code.** Prompt with `FolderBrowserDialog` when `-ProjectPath` is absent; detect default WSL; provision with WSL `make install` and `make build`; install Windows `uv`, package `host.py` with pinned PyInstaller, write manifest/config, register both HKCU keys, and run ping/health self-check.
-- [ ] **Verify GREEN.** Execute installer `-WhatIf`, temporary-key integration test, real per-user install, Chrome ping, Edge ping, uninstall, and reinstall; verify no administrator prompt and no data-directory deletion.
-- [ ] **Commit.** Run `git add integrations/sitefilter-native-host && git commit -m "[native-host] feat: install Chrome and Edge bridge"`.
+- [x] **Write the failing test.** Add `-WhatIf`, `-ProjectPath`, and `-SkipProvision` modes and a test harness using temporary registry names; assert project validation, WSL path conversion, Chrome/Edge manifest entries, exact allowed origin, config permissions, idempotent reinstall, and uninstall scope.
+- [x] **Verify RED.** Run PowerShell in `-WhatIf` mode; expect the installer scripts to be absent.
+- [x] **Implement minimal code.** Prompt with `FolderBrowserDialog` when `-ProjectPath` is absent; detect default WSL; provision with WSL `make install` and `make build`; install Windows `uv`, package `host.py` with pinned PyInstaller, write manifest/config, register both HKCU keys, and run ping/health self-check.
+- [x] **Verify GREEN.** Execute installer `-WhatIf`, temporary-key integration test, real per-user install, Chrome ping, Edge ping, uninstall, and reinstall; verify no administrator prompt and no data-directory deletion.
+- [x] **Commit.** Run `git add integrations/sitefilter-native-host && git commit -m "[native-host] feat: install Chrome and Edge bridge"`.
 
 ### Task 7: Add SiteFilter native transport owner
 
