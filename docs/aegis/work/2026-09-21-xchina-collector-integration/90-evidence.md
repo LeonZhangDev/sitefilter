@@ -48,3 +48,12 @@
 - Live WSL evidence: stale readiness changed to `ready=false`, health plus Collector-specific config discovery succeeded, SIGTERM removed the owned child/descriptor and released the lock, and forced preflight failure left no descriptor/listener.
 - Safety behavior: manual discovery remains `owned=false`; activity-query failures fail safe as busy; pre-child cleanup is exact-marker guarded; signal tests synchronize after handler installation.
 - Review: independent specification and final quality re-review passed with no open findings.
+
+## Task 5 — Allowlisted Native Messaging Host
+
+- Collector commit: `f3356ccc3b5fe1d21b409c013b1c8fd046de8e38` (`[native-host] feat: bridge SiteFilter to Collector`).
+- Cross-platform tests: 74 Host tests passed on Windows and 74 passed in WSL; Task 4 runtime regressions passed 13 with one platform skip.
+- Subprocess evidence: normal ping, high/low surrogate IDs, and 5,000-level nested JSON all produced bounded framed behavior with no trailing stdout or traceback.
+- Security evidence: exact six-action and origin allowlists, strict config/payload types, bounded response/discovery/descriptor reads, no redirects, query/fragment stripping before forwarding, secret-free categorical logging, strict JSON numbers/depth, and early launcher-exit detection.
+- Compatibility: preview timeout is 150 seconds, covering the existing two-attempt 110-second path with margin; Host capability discovery matches the live Collector config shape.
+- Review: independent specification and final security-quality reviews passed with no open findings.

@@ -2,13 +2,13 @@
 
 ## TodoCheckpointDraft
 
-- Current todo: Task 5 — build the allowlisted Native Messaging Host.
-- Active slice: implement the framed Windows host protocol and narrow Collector-operation allowlist against the reviewed native runtime contract.
-- Completed todos: specification approval, implementation planning, and Tasks 0–4.
-- Pending todos: Tasks 5–10 from the parent implementation plan.
-- Evidence refs: approved requirements/design/plan, Collector commits through `da5ac1150aa3c9598ba8735852781de35bffe7af`, and `90-evidence.md`.
-- Blocked on: nothing known for Task 5.
-- Next step: dispatch Task 5 with framing limits, input validation, WSL startup/discovery, and allowlisted proxy tests.
+- Current todo: Task 6 — add guided installation and removal.
+- Active slice: package the reviewed Host and install/remove only explicit LocalAppData and HKCU targets for Chrome and Edge.
+- Completed todos: specification approval, implementation planning, and Tasks 0–5.
+- Pending todos: Tasks 6–10 from the parent implementation plan.
+- Evidence refs: approved requirements/design/plan, Collector commits through `f3356ccc3b5fe1d21b409c013b1c8fd046de8e38`, and `90-evidence.md`.
+- Blocked on: nothing known for Task 6.
+- Next step: dispatch Task 6 with dry-run/disposable registry verification before production-key installation.
 
 ## Task 0 Evidence
 
@@ -21,7 +21,7 @@
 
 ## ResumeStateHint
 
-Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the parent plan. Confirm both feature worktrees are clean at their recorded commits, then continue with Task 5.
+Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the parent plan. Confirm both feature worktrees are clean at their recorded commits, then continue with Task 6.
 
 ## DriftCheckDraft
 
@@ -30,6 +30,6 @@ Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the par
 - Compatibility boundary: unchanged.
 - New owner/fallback/adapter: only the approved Native Messaging adapter is planned.
 - Retirement track: explicit.
-- Evidence sufficiency: Tasks 0–4 have direct RED/GREEN, immutable commits, clean-tree, cross-platform runtime checks, and two-stage review evidence; later tasks still require their own stated gates.
+- Evidence sufficiency: Tasks 0–5 have direct RED/GREEN, immutable commits, cross-platform runtime/protocol/subprocess checks, and two-stage review evidence; later tasks still require their own stated gates.
 - Execution Readiness View: present and aligned.
-- Decision: Task 4 preserved default startup, made native ownership/idle semantics explicit, and passed Windows plus WSL lifecycle checks without broadening into service management; continue to Task 5.
+- Decision: Task 5 remains an allowlisted adapter with bounded framing/HTTP/JSON, exact startup configuration, and no duplicated Collector business ownership; continue to Task 6.

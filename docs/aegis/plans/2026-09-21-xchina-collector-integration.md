@@ -240,11 +240,11 @@ Planning is necessary because this change introduces a security-sensitive native
 **Change Necessity:** no browser-only mechanism can spawn WSL.  
 **Impact/Compatibility:** host accepts only protocol v1 and six approved actions.
 
-- [ ] **Write the failing test.** Feed length-prefixed JSON through in-memory binary streams; assert round-trip framing, 1 MiB response guard, exact request IDs, caller-origin rejection, unsupported action rejection, non-XChina URL rejection, redacted errors, and no arbitrary endpoint/shell fields.
-- [ ] **Verify RED.** Run `uv run pytest -q tests/test_sitefilter_native_host.py`; expect missing host module.
-- [ ] **Implement minimal code.** Implement `read_message`, `write_message`, `validate_request`, `ensure_collector`, and explicit handlers for `ping`, `preview`, `create-or-reuse`, `get-task`, `open-task`, and `start-login`; stdout is protocol-only and logs use stderr/rotating file.
-- [ ] **Verify GREEN.** Run the focused pytest suite and a subprocess round trip that sends `ping` to `host.py`; require one valid framed response and exit 0.
-- [ ] **Commit.** Run `git add integrations/sitefilter-native-host tests/test_sitefilter_native_host.py && git commit -m "[native-host] feat: bridge SiteFilter to Collector"`.
+- [x] **Write the failing test.** Feed length-prefixed JSON through in-memory binary streams; assert round-trip framing, 1 MiB response guard, exact request IDs, caller-origin rejection, unsupported action rejection, non-XChina URL rejection, redacted errors, and no arbitrary endpoint/shell fields.
+- [x] **Verify RED.** Run `uv run pytest -q tests/test_sitefilter_native_host.py`; expect missing host module.
+- [x] **Implement minimal code.** Implement `read_message`, `write_message`, `validate_request`, `ensure_collector`, and explicit handlers for `ping`, `preview`, `create-or-reuse`, `get-task`, `open-task`, and `start-login`; stdout is protocol-only and logs use stderr/rotating file.
+- [x] **Verify GREEN.** Run the focused pytest suite and a subprocess round trip that sends `ping` to `host.py`; require one valid framed response and exit 0.
+- [x] **Commit.** Run `git add integrations/sitefilter-native-host tests/test_sitefilter_native_host.py && git commit -m "[native-host] feat: bridge SiteFilter to Collector"`.
 
 ### Task 6: Add guided installation and removal
 
