@@ -194,6 +194,27 @@ function backgroundHarness(seed) {
   check('missing host is classified separately', hostMissing);
 
   const activeKey = 'sf_collector_active_tasks_v1';
+  const latest = harness({ [activeKey]: {
+    '9': { contentKey: 'xchina_gallery:6664761937f5a', taskId: 9, terminalNotified: true },
+    '12': { contentKey: 'xchina_gallery:6664761937f5a', taskId: 12, terminalNotified: false },
+    '20': { contentKey: 'xchina_video:6aaee7c9a12e8', taskId: 20, terminalNotified: false },
+  } });
+  const latestRestore = latest.bridge.routeMessage({
+    type: 'sf_collector_restore', content_key: 'xchina_gallery:6664761937f5a'
+  });
+  await wait();
+  check('content restore queries the latest matching task only', latest.ports.length === 1 &&
+    latest.ports[0].sent.length === 1 && latest.ports[0].sent[0].action === 'get-task' &&
+    latest.ports[0].sent[0].payload.task_id === 12);
+  reply(latest.ports[0], latest.ports[0].sent[0], { id: 12, status: 'downloading', resource_counts: { done: 2, pending: 3 } });
+  const latestResult = await latestRestore;
+  check('content restore returns the current Collector task', latestResult.found === true && latestResult.task.id === 12);
+
+  let invalidRestore = false;
+  try { await latest.bridge.routeMessage({ type: 'sf_collector_restore', content_key: '__proto__' }); }
+  catch (e) { invalidRestore = e.code === 'invalid-content-key'; }
+  check('content restore rejects malformed identity', invalidRestore);
+
   const active = harness();
   await active.bridge.trackTask({ id: 41, status: 'running' }, 'xchina_gallery:6664761937f5a');
   check('active schema persists only canonical fields', JSON.stringify(active.store[activeKey]['41']) ===
@@ -218,6 +239,25 @@ function backgroundHarness(seed) {
   const afterNotifyRestart = harness(retry.store);
   await afterNotifyRestart.bridge.restoreAndPoll();
   check('completed notification is not duplicated after restart', afterNotifyRestart.notices.length === 0 && afterNotifyRestart.ports.length === 0);
+
+  for (const terminalCase of [
+    ['partial', '部分完成'], ['failed', '失败'], ['cancelled', '已取消'],
+  ]) {
+    const [status, label] = terminalCase;
+    const taskId = status === 'partial' ? 81 : status === 'failed' ? 82 : 83;
+    const terminalHarness = harness({ [activeKey]: {
+      [String(taskId)]: { contentKey: 'xchina_gallery:6664761937f5a', taskId, terminalNotified: false }
+    } });
+    const terminalPoll = terminalHarness.bridge.restoreAndPoll(); await wait();
+    reply(terminalHarness.ports[0], terminalHarness.ports[0].sent[0], { id: taskId, status, name: 'Album' });
+    await terminalPoll; await wait(5);
+    check(status + ' terminal notification has a stable Chinese outcome', terminalHarness.notices.length === 1 &&
+      terminalHarness.notices[0].options.title.includes(label) &&
+      terminalHarness.store[activeKey][String(taskId)].terminalNotified === true);
+    const terminalRestart = harness(terminalHarness.store);
+    await terminalRestart.bridge.restoreAndPoll();
+    check(status + ' notification is not duplicated after worker restart', terminalRestart.notices.length === 0 && terminalRestart.ports.length === 0);
+  }
 
   const poison = JSON.parse('{"1":{"contentKey":null,"taskId":1,"terminalNotified":false},"__proto__":{"contentKey":null,"taskId":2,"terminalNotified":false},"2":{"contentKey":"bad","taskId":2,"terminalNotified":false},"3":{"contentKey":null,"taskId":"3","terminalNotified":false}}');
   const hardened = harness({ [activeKey]: poison });

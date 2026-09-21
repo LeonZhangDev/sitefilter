@@ -39,6 +39,16 @@
 > 以便你后续随时新增监管站点、以及**在任意网页做下载链接探测**。
 > 在列表外的站点上，脚本只做链接探测，不做任何卡片处理。
 
+### XChina 相册/视频交给 Universal Web Collector
+
+XChina 照片和视频详情页会显示 **交给 Collector 下载**。扩展只负责预览、建立任务关联和显示摘要；网页解析、登录状态、下载、重试与输出目录都由 Universal Web Collector 管理。
+
+1. 在 Universal Web Collector 项目目录中运行 `integrations\sitefilter-native-host\install-native-host.ps1`，按向导选择 Collector 项目和 WSL 发行版。
+2. 重新加载 SiteFilter，回到 XChina 详情页，点击“重新检测”。扩展不会自动打开 Collector 管理页。
+3. 预览确认后创建任务。如果已有完成任务，需要再次明确确认才会增量重新下载；失败或暂停任务会引导到原任务重试/恢复。
+
+再次访问同一内容时，页面会恢复最新关联任务。若 Collector 提示需要登录，只有点击“启动登录”才会打开 Collector 的 WSLg 登录会话。SiteFilter **不会读取、导出或传输 Chrome/Edge Cookie**。
+
 ---
 
 ## 二、默认已包含的站点

@@ -196,12 +196,18 @@
   function terminalNotification(task) {
     var id = taskId(task);
     var status = String(task.status || '');
+    var outcome = {
+      success: { title: 'Collector 下载完成', label: '已完成' },
+      partial: { title: 'Collector 部分完成', label: '部分完成' },
+      failed: { title: 'Collector 任务失败', label: '失败' },
+      cancelled: { title: 'Collector 任务已取消', label: '已取消' }
+    }[status] || { title: 'Collector 任务已结束', label: '已结束' };
     return new Promise(function (resolve, reject) {
       chrome.notifications.create('sf_collector_task_' + id, {
         type: 'basic',
         iconUrl: chrome.runtime.getURL('icons/icon128.png'),
-        title: status === 'success' ? 'Collector 下载完成' : 'Collector 任务已结束',
-        message: (task.name ? String(task.name) + ' · ' : '') + status + '，点击查看任务详情。'
+        title: outcome.title,
+        message: (task.name ? String(task.name) + ' · ' : '') + outcome.label + '，点击查看任务详情。'
       }, function () {
         if (runtimeError()) { reject(bridgeError('notification-failed', '无法显示 Collector 任务通知。', true)); return; }
         resolve();
@@ -251,6 +257,23 @@
     });
   }
 
+  function restoreContent(contentKey) {
+    if (typeof contentKey !== 'string' || !CONTENT_KEY.test(contentKey)) {
+      return Promise.reject(bridgeError('invalid-content-key', '页面内容标识无效。'));
+    }
+    return readActive().then(function (tasks) {
+      var latest = Object.keys(tasks).reduce(function (selected, id) {
+        var record = tasks[id];
+        if (record.contentKey !== contentKey) return selected;
+        return !selected || record.taskId > selected.taskId ? record : selected;
+      }, null);
+      if (!latest) return { found: false };
+      return request('get-task', { task_id: latest.taskId }).then(function (task) {
+        return observeTask(task).then(function () { return { found: true, task: task }; });
+      });
+    });
+  }
+
   function createOrReuse(msg) {
     var payload = { url: msg.url };
     if (msg.media != null) payload.media = msg.media;
@@ -274,6 +297,7 @@
       return request('preview', preview);
     }
     if (msg.type === 'sf_collector_create') return createOrReuse(msg);
+    if (msg.type === 'sf_collector_restore') return restoreContent(msg.content_key);
     if (msg.type === 'sf_collector_get_task') {
       return request('get-task', { task_id: msg.task_id }).then(function (task) {
         return observeTask(task).then(function () { return task; });
@@ -295,6 +319,7 @@
     routeMessage: routeMessage,
     trackTask: trackTask,
     observeTask: observeTask,
+    restoreContent: restoreContent,
     restoreAndPoll: restoreAndPoll,
     openNotification: openNotification,
     activeStorageKey: ACTIVE_KEY
