@@ -279,11 +279,11 @@ Planning is necessary because this change introduces a security-sensitive native
 **Change Necessity:** existing download probing lists links but does not create Collector tasks.  
 **Impact/Compatibility:** activate only on recognized XChina detail shapes; other pages remain untouched.
 
-- [ ] **Write the failing test.** With jsdom fixtures for the approved photo/video headings, assert recognition, canonical provisional keys, title button label, panel slot, shared disabled state, photo `media:auto`, video auto collector, preview modal fields, image/video-only menu choices, double-click idempotence, and complete teardown.
-- [ ] **Verify RED.** Run `node _test_xchina_download.js`; expect missing script behavior.
-- [ ] **Implement minimal code.** Load `xchina-download.js` after `content.js`; use `document.querySelector("h1")` with panel fallback; communicate only through runtime messages; add namespaced CSS and accessible modal focus/escape behavior.
-- [ ] **Verify GREEN.** Run `_test_xchina_download.js`, `_smoke.js`, `_test_softblock.js`, and `python ci.py --out build-xchina-ui`.
-- [ ] **Commit.** Run `git add xchina-download.js _test_xchina_download.js manifest.json content.js content.css make_package.py && git commit -m "[xchina] feat: add Collector download controls"`.
+- [x] **Write the failing test.** With jsdom fixtures for the approved photo/video headings, assert recognition, canonical provisional keys, title button label, panel slot, shared disabled state, photo `media:auto`, video auto collector, preview modal fields, image/video-only menu choices, double-click idempotence, and complete teardown.
+- [x] **Verify RED.** Run `node _test_xchina_download.js`; expect missing script behavior.
+- [x] **Implement minimal code.** Load `xchina-download.js` after `content.js`; use `document.querySelector("h1")` with panel fallback; communicate only through runtime messages; add namespaced CSS and accessible modal focus/escape behavior.
+- [x] **Verify GREEN.** Run `_test_xchina_download.js`, `_smoke.js`, `_test_softblock.js`, and `python ci.py --out build-xchina-ui`.
+- [x] **Commit.** Run `git add xchina-download.js _test_xchina_download.js manifest.json content.js content.css make_package.py && git commit -m "[xchina] feat: add Collector download controls"`.
 
 ### Task 9: Complete restoration, login recovery, and user guidance
 

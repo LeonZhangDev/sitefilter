@@ -79,3 +79,14 @@
 - Persistence/notifications: storage is normalized to the minimal task schema, mutation failures recover, fixed notification IDs are retry-safe, and successful terminal delivery is persisted before cleanup.
 - Background integration: tests execute the actual service worker routing, alarms, async `sendResponse`, notification click handling, and verify that task deep links remain behind the allowlisted Host action rather than direct tab URLs.
 - Review: final independent specification and code-quality reviews passed with no blocking findings; live browser disconnect/notification timing remains assigned to Task 10.
+
+## Task 8 — XChina Detail Controls and Preview
+
+- SiteFilter commits: `3f0a683543861044f18954397f737967e017a779` and final page-identity fix `649a13b57c5efb179c577ea0aab1b80fa249fd17`.
+- RED: the focused test failed because `xchina-download.js` did not exist.
+- GREEN: the focused suite passed 45 tests, smoke passed 110, soft-block passed 23, and UTF-8 full CI passed 14 suites and 680 assertions with package validation.
+- Scope: controls activate only on strict HTTPS XChina photo/video detail identities; non-target pages receive no slot or control DOM.
+- UI: title and panel controls share state; photo supports automatic, image-only, and video-only policies; video uses its supported automatic/video policy; preview/confirmation is accessible with focus containment, Escape, and focus restoration.
+- Race safety: preview/create operations bind an immutable page snapshot plus generation/token; SPA navigation removes the modal and ignores stale results without creating or updating the replacement page.
+- Protocol safety: preview/create envelopes, exact identities, task IDs, dispositions, resource counts, and collector selection are validated before declaring success.
+- Review: final independent specification and code-quality reviews passed with no blocking findings.
