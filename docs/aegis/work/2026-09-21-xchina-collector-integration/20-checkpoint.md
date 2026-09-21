@@ -2,13 +2,13 @@
 
 ## TodoCheckpointDraft
 
-- Current todo: Task 4 — add native startup and idle supervision.
-- Active slice: add a silent Collector startup target plus ownership-aware idle shutdown policy.
-- Completed todos: specification approval, implementation planning, and Tasks 0–3.
-- Pending todos: Tasks 4–10 from the parent implementation plan.
-- Evidence refs: approved requirements/design/plan, Collector commits through `39dc5752ac48208b3f9850b05a59597e7354f827`, and `90-evidence.md`.
-- Blocked on: nothing known for Task 4.
-- Next step: dispatch Task 4 with process ownership, active/paused/watch protection, and 30-minute idle constraints.
+- Current todo: Task 5 — build the allowlisted Native Messaging Host.
+- Active slice: implement the framed Windows host protocol and narrow Collector-operation allowlist against the reviewed native runtime contract.
+- Completed todos: specification approval, implementation planning, and Tasks 0–4.
+- Pending todos: Tasks 5–10 from the parent implementation plan.
+- Evidence refs: approved requirements/design/plan, Collector commits through `da5ac1150aa3c9598ba8735852781de35bffe7af`, and `90-evidence.md`.
+- Blocked on: nothing known for Task 5.
+- Next step: dispatch Task 5 with framing limits, input validation, WSL startup/discovery, and allowlisted proxy tests.
 
 ## Task 0 Evidence
 
@@ -21,7 +21,7 @@
 
 ## ResumeStateHint
 
-Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the parent plan. Confirm both feature worktrees are clean at their recorded commits, then continue with Task 4.
+Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the parent plan. Confirm both feature worktrees are clean at their recorded commits, then continue with Task 5.
 
 ## DriftCheckDraft
 
@@ -30,6 +30,6 @@ Resume by reading `10-intent.md`, this checkpoint, `90-evidence.md`, and the par
 - Compatibility boundary: unchanged.
 - New owner/fallback/adapter: only the approved Native Messaging adapter is planned.
 - Retirement track: explicit.
-- Evidence sufficiency: Tasks 0–3 have direct RED/GREEN, immutable commits, clean-tree, and two-stage review evidence; later tasks still require their own stated gates.
+- Evidence sufficiency: Tasks 0–4 have direct RED/GREEN, immutable commits, clean-tree, cross-platform runtime checks, and two-stage review evidence; later tasks still require their own stated gates.
 - Execution Readiness View: present and aligned.
-- Decision: Task 3 kept task truth in Collector, added only backward-compatible summary fields and query-driven selection, and introduced no transport or extension drift; continue to Task 4.
+- Decision: Task 4 preserved default startup, made native ownership/idle semantics explicit, and passed Windows plus WSL lifecycle checks without broadening into service management; continue to Task 5.

@@ -227,11 +227,11 @@ Planning is necessary because this change introduces a security-sensitive native
 **Change Necessity:** current `make start` opens a browser and has no ownership or idle contract.  
 **Impact/Compatibility:** default `make start` behavior must remain identical.
 
-- [ ] **Write the failing test.** Test argument parsing for `--native`, `--runtime-file`, and `--idle-minutes`; test runtime descriptor shape; test that active/paused tasks or enabled watches reset idle, while 30 idle minutes requests shutdown; test that a discovered manual instance is marked `owned=false`.
-- [ ] **Verify RED.** Run `uv run pytest -q tests/test_native_runtime.py`; expect missing native runtime helpers.
-- [ ] **Implement minimal code.** Add pure helpers for descriptor writing and idle decisions, a single-instance lock, native-mode `--no-open`, and parent-owned child shutdown; add `start-native: uv run python scripts/start.py --native --no-open --idle-minutes 30` to Makefile.
-- [ ] **Verify GREEN.** Run `uv run pytest -q tests/test_native_runtime.py tests/test_watchdog.py tests/test_pause_resume.py`, then run `make start-native` once with a temporary runtime path and verify `/healthz` before stopping it.
-- [ ] **Commit.** Run `git add scripts/start.py Makefile tests/test_native_runtime.py && git commit -m "[runtime] feat: add native startup supervision"`.
+- [x] **Write the failing test.** Test argument parsing for `--native`, `--runtime-file`, and `--idle-minutes`; test runtime descriptor shape; test that active/paused tasks or enabled watches reset idle, while 30 idle minutes requests shutdown; test that a discovered manual instance is marked `owned=false`.
+- [x] **Verify RED.** Run `uv run pytest -q tests/test_native_runtime.py`; expect missing native runtime helpers.
+- [x] **Implement minimal code.** Add pure helpers for descriptor writing and idle decisions, a single-instance lock, native-mode `--no-open`, and parent-owned child shutdown; add `start-native: uv run python scripts/start.py --native --no-open --idle-minutes 30` to Makefile.
+- [x] **Verify GREEN.** Run `uv run pytest -q tests/test_native_runtime.py tests/test_watchdog.py tests/test_pause_resume.py`, then run `make start-native` once with a temporary runtime path and verify `/healthz` before stopping it.
+- [x] **Commit.** Run `git add scripts/start.py Makefile tests/test_native_runtime.py && git commit -m "[runtime] feat: add native startup supervision"`.
 
 ### Task 5: Build the allowlisted Native Messaging Host
 

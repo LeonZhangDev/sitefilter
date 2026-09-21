@@ -39,3 +39,12 @@
 - Browser evidence: isolated task creation and `/?task=1` selected the matching row and rendered detail; `/` retained the unselected root behavior. Only owned processes and artifacts were cleaned afterward.
 - Review: independent specification and quality reviews passed with no open findings.
 - Existing environment notes: Vite CJS deprecation warning and npm audit findings (one moderate, one high) predate this dependency-free task.
+
+## Task 4 — Native Startup and Idle Supervision
+
+- Collector commit: `da5ac1150aa3c9598ba8735852781de35bffe7af` (`[runtime] feat: add native startup supervision`). The implementer initially reported a different full SHA suffix; repository `git rev-parse HEAD` is the authority recorded here.
+- Tests: final WSL suite passed 30 with one platform skip; Windows native-runtime suite passed 12 with one platform skip.
+- Live Windows evidence: two-process lock contention reached discovery without `PermissionError`.
+- Live WSL evidence: stale readiness changed to `ready=false`, health plus Collector-specific config discovery succeeded, SIGTERM removed the owned child/descriptor and released the lock, and forced preflight failure left no descriptor/listener.
+- Safety behavior: manual discovery remains `owned=false`; activity-query failures fail safe as busy; pre-child cleanup is exact-marker guarded; signal tests synchronize after handler installation.
+- Review: independent specification and final quality re-review passed with no open findings.
