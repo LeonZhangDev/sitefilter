@@ -22,7 +22,7 @@ function fixture(url, heading = '<h1>测试标题</h1>') {
   const { window } = dom;
   const host = window.document.querySelector('.cf-host');
   const shadow = host.attachShadow({ mode: 'open' });
-  shadow.innerHTML = '<div id="collectorSlot" class="cf-xchina-panel-slot"></div>';
+  shadow.innerHTML = '<div id="panel"><div id="stats"></div></div>';
   const sent = [];
   const responses = [];
   window.chrome = { runtime: {
@@ -54,7 +54,7 @@ async function run() {
     check('panel control rendered', !!h.shadow.querySelector('[data-sf-xchina="panel"]'));
     check('explicit Collector label', [...h.document.querySelectorAll('.sf-xchina-primary')].some(b => b.textContent.includes('交给 Collector 下载')));
     check('photo menu offers image-only', !!h.document.querySelector('[data-media="image"]'));
-    check('photo menu does not offer video-only', !h.document.querySelector('[data-media="video"]'));
+    check('photo menu offers video-only', !!h.document.querySelector('[data-media="video"]'));
 
     let releasePreview;
     h.responses.push(new Promise(resolve => { releasePreview = resolve; }));
@@ -63,6 +63,7 @@ async function run() {
     check('both locations share loading status', h.document.querySelector('.sf-xchina-status').textContent === h.shadow.querySelector('.sf-xchina-status').textContent && /预览/.test(h.document.querySelector('.sf-xchina-status').textContent));
     releasePreview({ ok: true, result: {
       collector: 'xchina_gallery', group: 'Collector 标题', photos: 12, videos: 2,
+      media: ['image', 'video'],
       video_bytes: 1048576, output_dir: 'D:/Downloads', sampled: true,
       warning: '这是警告', disposition: 'reused-active',
     } });
@@ -79,6 +80,14 @@ async function run() {
     await wait();
     check('double confirm creates once', h.sent.filter(x => x.type === 'sf_collector_create').length === 1);
     check('shared loading/disabled state clears together', [...h.document.querySelectorAll('.sf-xchina-primary')].every(b => !b.disabled));
+    h.responses.push({ ok: true, result: { collector: 'xchina_gallery', group: '仅图片', media: ['image'], photos: 12, videos: null, sampled: false } });
+    h.document.querySelector('[data-media="image"]').click(); await wait();
+    check('image-only action sends media image and accepts excluded null count', h.sent[h.sent.length - 1].media === 'image' && !!h.document.querySelector('[data-sf-xchina="modal"]'));
+    h.document.querySelector('[data-action="cancel"]').click();
+    h.responses.push({ ok: true, result: { collector: 'xchina_gallery', group: '仅视频', media: ['video'], photos: null, videos: 2, sampled: false } });
+    h.document.querySelector('[data-media="video"]').click(); await wait();
+    check('photo video-only action sends media video', h.sent[h.sent.length - 1].media === 'video' && !!h.document.querySelector('[data-sf-xchina="modal"]'));
+    h.document.querySelector('[data-action="cancel"]').click();
     h.api.destroy();
     check('destroy removes all DOM', !h.document.querySelector('[data-sf-xchina]') && !h.shadow.querySelector('[data-sf-xchina]'));
   }
@@ -90,7 +99,7 @@ async function run() {
     check('video provisional key canonical', page && page.contentKey === 'xchina_video:6aaee7c9a12e8');
     check('video menu offers video-only', !!h.document.querySelector('[data-media="video"]'));
     check('video menu does not offer image-only', !h.document.querySelector('[data-media="image"]'));
-    h.responses.push({ ok: true, result: { collector: 'xchina_video', title: '视频标题', photos: 0, videos: 1, sampled: false } });
+    h.responses.push({ ok: true, result: { collector: 'xchina_video', title: '视频标题', media: ['video'], photos: 0, videos: 1, sampled: false } });
     h.document.querySelector('.sf-xchina-primary').click();
     await wait();
     check('video primary uses automatic Collector media', h.sent[0] && h.sent[0].type === 'sf_collector_preview' && !Object.prototype.hasOwnProperty.call(h.sent[0], 'media'));
@@ -104,7 +113,7 @@ async function run() {
   ]) {
     const h = fixture(url);
     h.api.init();
-    check('unsupported URL injects nothing: ' + url, !h.document.querySelector('[data-sf-xchina]') && !h.shadow.querySelector('[data-sf-xchina]'));
+    check('unsupported URL injects nothing: ' + url, !h.document.querySelector('[data-sf-xchina]') && !h.shadow.querySelector('[data-sf-xchina]') && !h.shadow.querySelector('#collectorSlot'));
   }
   {
     const h = fixture('https://xchina.co/');
@@ -127,7 +136,7 @@ async function run() {
     const h = fixture('https://xchina.co/photo/id-6664761937f5a.html');
     h.api.init();
     const opener = h.document.querySelector('.sf-xchina-primary');
-    h.responses.push({ ok: true, result: { collector: 'xchina_gallery', group: 'A', photos: 1, videos: 0 } });
+    h.responses.push({ ok: true, result: { collector: 'xchina_gallery', group: 'A', media: ['image'], photos: 1, videos: 0, sampled: false } });
     opener.focus(); opener.click(); await wait();
     const modal = h.document.querySelector('[data-sf-xchina="modal"]');
     const cancel = modal.querySelector('[data-action="cancel"]');
@@ -137,6 +146,71 @@ async function run() {
     h.document.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     check('Escape closes modal', !h.document.querySelector('[data-sf-xchina="modal"]'));
     check('modal restores opener focus', h.document.activeElement === opener);
+  }
+
+  {
+    const h = fixture('https://xchina.co/photo/id-6664761937f5a.html');
+    h.api.init();
+    let release;
+    h.responses.push(new Promise(resolve => { release = resolve; }));
+    h.document.querySelector('.sf-xchina-primary').click();
+    h.window.history.pushState({}, '', '/video/id-6aaee7c9a12e8.html');
+    h.api.reconcile();
+    release({ ok: true, result: { collector: 'xchina_gallery', group: '旧页面', media: ['image'], photos: 1, videos: 0, sampled: false } });
+    await wait();
+    check('pending preview from page A is ignored after navigation to B', !h.document.querySelector('[data-sf-xchina="modal"]') && h.api.current().contentKey === 'xchina_video:6aaee7c9a12e8');
+    check('new page controls are not left busy by stale preview', !h.document.querySelector('.sf-xchina-primary').disabled);
+  }
+
+  {
+    const h = fixture('https://xchina.co/photo/id-6664761937f5a.html');
+    h.api.init();
+    h.responses.push({ ok: true, result: { collector: 'xchina_gallery', group: 'A', media: ['image'], photos: 1, videos: 0, sampled: false } });
+    h.document.querySelector('.sf-xchina-primary').click(); await wait();
+    check('page A modal exists before navigation', !!h.document.querySelector('[data-sf-xchina="modal"]'));
+    h.window.history.pushState({}, '', '/video/id-6aaee7c9a12e8.html'); h.api.reconcile();
+    check('navigation tears down page A modal', !h.document.querySelector('[data-sf-xchina="modal"]'));
+  }
+
+  {
+    const h = fixture('https://xchina.co/photo/id-6664761937f5a.html');
+    h.api.init();
+    h.responses.push({ ok: true, result: { collector: 'xchina_gallery', group: 'A', media: ['image'], photos: 1, videos: 0, sampled: false } });
+    h.document.querySelector('.sf-xchina-primary').click(); await wait();
+    let release;
+    h.responses.push(new Promise(resolve => { release = resolve; }));
+    h.document.querySelector('[data-action="confirm"]').click();
+    h.window.history.pushState({}, '', '/video/id-6aaee7c9a12e8.html'); h.api.reconcile();
+    release({ ok: true, result: { task_id: 91, disposition: 'created', content_key: 'xchina_gallery:6664761937f5a' } });
+    await wait();
+    check('stale create response does not pollute page B', !/91/.test(h.document.querySelector('.sf-xchina-status').textContent) && !h.document.querySelector('[data-sf-xchina="modal"]'));
+  }
+
+  {
+    const invalidCases = [
+      { name: 'missing result', response: { ok: true } },
+      { name: 'array result', response: { ok: true, result: [] } },
+      { name: 'wrong preview count', response: { ok: true, result: { collector: 'xchina_gallery', group: 'A', media: ['image'], photos: -1, videos: 0, sampled: false } } },
+    ];
+    for (const item of invalidCases) {
+      const h = fixture('https://xchina.co/photo/id-6664761937f5a.html');
+      h.api.init(); h.responses.push(item.response);
+      h.document.querySelector('.sf-xchina-primary').click(); await wait();
+      check('malformed preview rejected: ' + item.name, /协议响应无效/.test(h.document.querySelector('.sf-xchina-status').textContent) && !h.document.querySelector('[data-sf-xchina="modal"]'));
+      h.api.destroy();
+    }
+  }
+
+  {
+    const h = fixture('https://xchina.co/photo/id-6664761937f5a.html');
+    h.api.init();
+    h.responses.push({ ok: true, result: { collector: 'xchina_gallery', group: 'A', media: ['image'], photos: 1, videos: 0, sampled: false } });
+    h.document.querySelector('.sf-xchina-primary').click(); await wait();
+    const modal = h.document.querySelector('[data-sf-xchina="modal"]');
+    h.responses.push({ ok: true, result: { task_id: 3, disposition: 'created', content_key: 'xchina_gallery:aaaaaaaaaaaaa' } });
+    modal.querySelector('[data-action="confirm"]').click(); await wait();
+    check('mismatched create identity rejected', /协议响应无效/.test(h.document.querySelector('.sf-xchina-status').textContent));
+    check('mismatched create keeps modal open', h.document.querySelector('[data-sf-xchina="modal"]') === modal && !modal.querySelector('[data-action="confirm"]').disabled);
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

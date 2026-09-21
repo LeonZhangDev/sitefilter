@@ -1500,7 +1500,6 @@
       '    <label data-tg="boss"><input type="checkbox" data-cb="boss">老板键</label>',
       '  </div>',
       '  <div class="cf-st" id="stats"></div>',
-      '  <div class="cf-xchina-panel-slot" id="collectorSlot"></div>',
       '  <div class="cf-searchwrap"><input id="search" class="cf-search" placeholder="🔍 全局搜索：女优 / 标签 / 番号 / 规则…" /></div>',
       '  <div class="cf-filter" id="filter">',
       '    <span class="fl">筛选</span>',
@@ -1575,7 +1574,7 @@
       dots.appendChild(d);
     });
 
-    ui = { host: host, sr: sr, ball: ball, panel: panel, list: list, stats: statsEl, collectorSlot: sr.getElementById('collectorSlot'), qin: qin, qtype: qtype, dots: dots, tabs: tabsEl, tabDefs: TABS, flRating: flRating, flDate: flDate, importBtn: importBtn, search: searchEl, warn: warnEl, pick: pickEl };
+    ui = { host: host, sr: sr, ball: ball, panel: panel, list: list, stats: statsEl, qin: qin, qtype: qtype, dots: dots, tabs: tabsEl, tabDefs: TABS, flRating: flRating, flDate: flDate, importBtn: importBtn, search: searchEl, warn: warnEl, pick: pickEl };
 
     flRating.addEventListener('change', applyFilter);
     flDate.addEventListener('change', applyFilter);

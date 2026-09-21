@@ -13,8 +13,30 @@
     interval: null,
     listeners: [],
     lastUrl: '',
-    destroyed: false
+    destroyed: false,
+    generation: 0,
+    operationToken: 0
   };
+
+  var DISPOSITIONS = {
+    created: true,
+    'reused-active': true,
+    'confirm-redownload': true,
+    'recommend-retry': true,
+    'recommend-resume': true
+  };
+
+  function protocolError() {
+    var error = new Error('Collector 协议响应无效，请重新预览。');
+    error.code = 'invalid-collector-response';
+    return error;
+  }
+
+  function isPlainObject(value) {
+    if (!value || Object.prototype.toString.call(value) !== '[object Object]') return false;
+    var proto = Object.getPrototypeOf(value);
+    return proto === null || !!(proto.constructor && proto.constructor.name === 'Object');
+  }
 
   function parseUrl(raw) {
     if (typeof raw !== 'string' || /[\\\u0000-\u001f\u007f]/.test(raw)) return null;
@@ -49,15 +71,20 @@
           var lastError;
           try { lastError = chrome.runtime.lastError; } catch (_) { lastError = null; }
           if (lastError) { reject(new Error(lastError.message || 'Collector 通信失败。')); return; }
-          if (!response || response.ok !== true) {
+          if (!isPlainObject(response)) { reject(protocolError()); return; }
+          if (response.ok !== true) {
             var err = response && response.error;
+            if (!isPlainObject(err) || typeof err.message !== 'string' || (err.code != null && typeof err.code !== 'string')) {
+              reject(protocolError()); return;
+            }
             var failure = new Error((err && err.message) || 'Collector 请求失败。');
             failure.code = err && err.code;
             failure.retriable = !!(err && err.retriable);
             reject(failure);
             return;
           }
-          resolve(response.result || {});
+          if (!isPlainObject(response.result)) { reject(protocolError()); return; }
+          resolve(response.result);
         });
       } catch (error) { reject(error); }
     });
@@ -115,6 +142,86 @@
     })[value] || (value ? String(value) : '尚未创建任务');
   }
 
+  function expectedCollector(snapshot) {
+    return snapshot.type === 'photo' ? 'xchina_gallery' : 'xchina_video';
+  }
+
+  function validNonnegativeInteger(value) {
+    return Number.isSafeInteger(value) && value >= 0;
+  }
+
+  function validatePreview(data, snapshot, media) {
+    if (!isPlainObject(data) || ['auto', 'image', 'video', null].indexOf(media) < 0) throw protocolError();
+    var resolved = data.resolved;
+    if (resolved != null && (!isPlainObject(resolved) || typeof resolved.collector !== 'string')) throw protocolError();
+    var collector = typeof data.collector === 'string' ? data.collector : resolved && resolved.collector;
+    if (collector !== expectedCollector(snapshot)) throw protocolError();
+    var title = fieldValue(data, ['title', 'group', 'name', 'album_title'], null);
+    if (typeof title !== 'string' || !title.trim()) throw protocolError();
+    function count(keys) {
+      var found = false, value = null;
+      keys.some(function (key) {
+        if (!Object.prototype.hasOwnProperty.call(data, key)) return false;
+        found = true; value = data[key]; return true;
+      });
+      if (!found || (value != null && !validNonnegativeInteger(value))) throw protocolError();
+      return value;
+    }
+    count(['photos', 'image_count', 'images']);
+    count(['videos', 'video_count']);
+    if (typeof data.sampled !== 'boolean') throw protocolError();
+    ['video_bytes', 'estimated_video_bytes', 'estimated_size'].forEach(function (key) {
+      if (data[key] != null && !validNonnegativeInteger(data[key])) throw protocolError();
+    });
+    ['output_dir', 'download_dir', 'warning'].forEach(function (key) {
+      if (data[key] != null && typeof data[key] !== 'string') throw protocolError();
+    });
+    if (data.warnings != null && (!Array.isArray(data.warnings) || data.warnings.some(function (item) { return typeof item !== 'string'; }))) throw protocolError();
+    if (!Array.isArray(data.media) || !data.media.length || data.media.some(function (item) { return item !== 'image' && item !== 'video'; })) throw protocolError();
+    if ((media === 'image' && (data.media.length !== 1 || data.media[0] !== 'image')) ||
+      ((media === 'video' || snapshot.type === 'video') && (data.media.length !== 1 || data.media[0] !== 'video'))) throw protocolError();
+    if (data.disposition != null && !DISPOSITIONS[data.disposition]) throw protocolError();
+    return data;
+  }
+
+  function validateCreate(data, snapshot) {
+    if (!isPlainObject(data) || !Number.isSafeInteger(data.task_id) || data.task_id <= 0 ||
+      !DISPOSITIONS[data.disposition] || data.content_key !== snapshot.contentKey) throw protocolError();
+    if (data.status != null && typeof data.status !== 'string') throw protocolError();
+    return data;
+  }
+
+  function snapshotPage() {
+    if (!state.page) return null;
+    return Object.freeze({
+      url: state.page.url,
+      contentKey: state.page.contentKey,
+      type: state.page.kind,
+      generation: state.generation
+    });
+  }
+
+  function isCurrent(snapshot, token) {
+    if (!snapshot || state.destroyed || snapshot.generation !== state.generation ||
+      (token != null && token !== state.operationToken) || !state.page) return false;
+    var live = parseUrl(root.location && root.location.href || '');
+    return !!live && live.url === snapshot.url && live.contentKey === snapshot.contentKey && live.kind === snapshot.type &&
+      state.page.url === snapshot.url && state.page.contentKey === snapshot.contentKey && state.page.kind === snapshot.type;
+  }
+
+  function beginOperation(snapshot, status) {
+    if (!isCurrent(snapshot)) return null;
+    var token = ++state.operationToken;
+    setState(true, status);
+    return token;
+  }
+
+  function finishOperation(snapshot, token, status) {
+    if (!isCurrent(snapshot, token)) return false;
+    setState(false, status);
+    return true;
+  }
+
   function number(value, fallback) {
     var n = Number(value);
     return Number.isFinite(n) && n >= 0 ? n : fallback;
@@ -154,7 +261,8 @@
     row.appendChild(term); row.appendChild(detail); list.appendChild(row);
   }
 
-  function showPreview(data, media, opener) {
+  function showPreview(data, media, opener, snapshot) {
+    if (!isCurrent(snapshot)) return;
     closeModal(false);
     var overlay = document.createElement('div');
     overlay.className = 'sf-xchina-modal';
@@ -163,6 +271,8 @@
     overlay.setAttribute('aria-modal', 'true');
     overlay.setAttribute('aria-labelledby', 'sf-xchina-modal-title');
     overlay._opener = opener;
+    overlay._snapshot = snapshot;
+    overlay._media = media;
     var card = document.createElement('section'); card.className = 'sf-xchina-modal-card';
     var title = document.createElement('h2'); title.id = 'sf-xchina-modal-title'; title.textContent = '确认交给 Collector';
     var list = document.createElement('dl'); list.className = 'sf-xchina-preview-list';
@@ -189,17 +299,25 @@
     cancel.addEventListener('click', function () { closeModal(true); });
     overlay.addEventListener('mousedown', function (event) { if (event.target === overlay) closeModal(true); });
     confirm.addEventListener('click', function () {
-      if (state.busy) return;
-      setState(true, '正在创建 Collector 任务…');
+      var bound = overlay._snapshot;
+      if (state.busy || !isCurrent(bound)) return;
+      var token = beginOperation(bound, '正在创建 Collector 任务…');
+      if (token == null) return;
       confirm.disabled = true; cancel.disabled = true;
-      var message = { type: 'sf_collector_create', url: state.page.url, force_new: false };
-      if (media != null) message.media = media;
+      var message = { type: 'sf_collector_create', url: bound.url, force_new: false };
+      if (overlay._media != null) message.media = overlay._media;
       send(message).then(function (result) {
+        if (!isCurrent(bound, token)) return;
+        try { validateCreate(result, bound); } catch (error) {
+          finishOperation(bound, token, error.message);
+          confirm.disabled = false; cancel.disabled = false;
+          return;
+        }
         var disposition = dispositionLabel(result.disposition);
-        setState(false, '任务 #' + (result.task_id || '—') + '：' + disposition);
+        if (!finishOperation(bound, token, '任务 #' + result.task_id + '：' + disposition)) return;
         closeModal(true);
       }).catch(function (error) {
-        setState(false, error.message || 'Collector 任务创建失败。');
+        if (!finishOperation(bound, token, error.message || 'Collector 任务创建失败。')) return;
         confirm.disabled = false; cancel.disabled = false;
       });
     });
@@ -221,13 +339,21 @@
 
   function preview(media, opener) {
     if (state.busy || !state.page) return;
-    setState(true, '正在启动 Collector 并预览…');
-    var message = { type: 'sf_collector_preview', url: state.page.url };
+    var snapshot = snapshotPage();
+    var token = beginOperation(snapshot, '正在启动 Collector 并预览…');
+    if (token == null) return;
+    var message = { type: 'sf_collector_preview', url: snapshot.url };
     if (media != null) message.media = media;
     send(message).then(function (result) {
-      setState(false, '预览已就绪');
-      showPreview(result, media, opener);
-    }).catch(function (error) { setState(false, error.message || 'Collector 预览失败。'); });
+      if (!isCurrent(snapshot, token)) return;
+      try { validatePreview(result, snapshot, media); } catch (error) {
+        finishOperation(snapshot, token, error.message);
+        return;
+      }
+      if (!finishOperation(snapshot, token, '预览已就绪')) return;
+      if (!isCurrent(snapshot)) return;
+      showPreview(result, media, opener, snapshot);
+    }).catch(function (error) { finishOperation(snapshot, token, error.message || 'Collector 预览失败。'); });
   }
 
   function buildControl(locationName) {
@@ -250,7 +376,7 @@
       menu.appendChild(button);
     }
     choice('预览默认策略', state.page.kind === 'photo' ? 'auto' : null);
-    if (state.page.kind === 'photo') choice('仅下载图片', 'image');
+    if (state.page.kind === 'photo') { choice('仅下载图片', 'image'); choice('仅下载视频', 'video'); }
     else choice('仅下载视频', 'video');
     menuButton.addEventListener('click', function () {
       menu.hidden = !menu.hidden;
@@ -269,11 +395,22 @@
     if (heading && !titleControl) heading.insertAdjacentElement('afterend', buildControl('title'));
     var host = document.querySelector('.cf-host');
     var slot = host && host.shadowRoot && host.shadowRoot.getElementById('collectorSlot');
+    if (!slot && host && host.shadowRoot) {
+      var panel = host.shadowRoot.getElementById('panel');
+      if (panel) {
+        slot = document.createElement('div');
+        slot.id = 'collectorSlot'; slot.className = 'cf-xchina-panel-slot'; slot.dataset.sfXchina = 'slot';
+        var stats = host.shadowRoot.getElementById('stats');
+        if (stats && stats.parentNode === panel) stats.insertAdjacentElement('afterend', slot);
+        else panel.insertBefore(slot, panel.firstChild);
+      }
+    }
     if (slot && !slot.querySelector('[data-sf-xchina="panel"]')) slot.appendChild(buildControl('panel'));
     updateControls();
   }
 
   function removeControls() {
+    state.operationToken++;
     closeModal(false);
     all('[data-sf-xchina]').forEach(function (node) { node.remove(); });
     state.controls = [];
@@ -289,7 +426,10 @@
       state.page = null; state.lastUrl = root.location && root.location.href || '';
       return null;
     }
-    if (changed && state.page) removeControls();
+    if (changed) {
+      if (state.page) removeControls();
+      state.generation++;
+    }
     state.page = next; state.lastUrl = root.location.href;
     ensureControls();
     return next;
@@ -313,7 +453,7 @@
     if (state.interval) clearInterval(state.interval);
     state.observer = null; state.interval = null;
     while (state.listeners.length) state.listeners.pop()();
-    removeControls(); state.page = null;
+    removeControls(); state.page = null; state.generation++;
   }
 
   root.SiteFilterXChinaDownload = Object.freeze({
