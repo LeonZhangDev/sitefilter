@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>SiteFilter 完整设置</title>
+<link rel="stylesheet" href="options.css" />
+</head>
+<body>
+<header>
+  <h1>SiteFilter 卡片过滤器</h1>
+  <span class="sp"></span>
+  <span class="meta">数据 100% 存于本机 · 不上传任何信息 · <span id="schemaTag"></span></span>
+</header>
+
+<div class="wrap">
+  <div class="tabs">
+    <button data-pane="rules" class="on">规则管理</button>
+    <button data-pane="groups">分组</button>
+    <button data-pane="sites">监管站点</button>
+    <button data-pane="favcodes">番号收藏夹</button>
+    <button data-pane="discover">发现 &amp; 推荐</button>
+    <button data-pane="stats">数据看板</button>
+    <button data-pane="settings">通用设置</button>
+  </div>
+
+  <!-- ================= 规则 ================= -->
+  <div class="pane on" id="pane-rules">
+    <div class="card">
+      <h2>批量添加 <small>每行一条；用 | 分隔别名，例如：三上悠亚 | みかみ ゆあ, Mikami Yua</small></h2>
+      <textarea id="bulk" placeholder="三上悠亚&#10;高清&#10;丝袜 | ストッキング"></textarea>
+      <div class="grid" style="margin-top:9px">
+        <select id="bType">
+          <option value="actress">女优</option>
+          <option value="tag">标签 / 类别</option>
+          <option value="maker">片商</option>
+          <option value="series">系列</option>
+          <option value="director">导演</option>
+          <option value="keyword">标题关键词</option>
+          <option value="code">番号 / 片商前缀</option>
+        </select>
+        <select id="bAction">
+          <option value="block">屏蔽</option>
+          <option value="favorite">收藏</option>
+          <option value="highlight">高亮</option>
+        </select>
+        <span id="bDots" style="display:flex;gap:5px"></span>
+        <span style="flex:1"></span>
+        <button class="primary" id="bulkAdd">添加到规则库</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>规则包模板 <small>一键导入成套的常见规则，导入后可在下方逐条调整</small></h2>
+      <div class="grid" style="align-items:center">
+        <select id="packSel" style="width:280px"></select>
+        <button class="primary" id="packApply">导入这个规则包</button>
+        <span style="flex:1"></span>
+        <span class="tip" style="margin:0">已存在同名同类型规则会自动跳过</span>
+      </div>
+      <div class="tip" id="packTip" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2>条件表达式 <small>把多个条件写成一句话；比「关键词 + 评分/日期」表达力强得多</small></h2>
+      <div class="tip" style="margin:0 0 8px;line-height:2">
+        写法：<code>字段 运算符 值</code>，用 <code>&amp;&amp;</code>（且）<code>||</code>（或）<code>!</code>（非）和括号任意组合。<br>
+        字段：<code>title</code> <code>actress</code> <code>tag</code> <code>maker</code> <code>series</code> <code>director</code> <code>code</code> <code>all</code> <code>rating</code> <code>date</code>；
+        运算符：<code>~</code> 包含、<code>=~</code> 正则、<code>!~</code> 正则不匹配、<code>=</code> 等于、<code>!=</code> 不等于、<code>&gt; &gt;= &lt; &lt;=</code>（只能用于 rating / date）。<br>
+        例：<code>rating &gt;= 4 &amp;&amp; date &gt;= 2023-01-01</code> ·
+        <code>title =~ /^(SSIS|STARS)-\d+/ &amp;&amp; !(tag ~ 巨乳)</code> ·
+        <code>(code =~ /^ABC-/ || maker ~ S1) &amp;&amp; rating &gt;= 4.5</code>
+      </div>
+      <div class="grid">
+        <input type="text" id="exprTest" placeholder="写下表达式，然后点「测试」" style="flex:1;min-width:320px" />
+        <select id="exprAct">
+          <option value="highlight">按此新建：高亮规则</option>
+          <option value="block">按此新建：屏蔽规则</option>
+          <option value="favorite">按此新建：收藏规则</option>
+        </select>
+        <button class="primary" id="exprRun">测试</button>
+        <button id="exprAdd">新建规则</button>
+      </div>
+      <textarea id="exprCtx" spellcheck="false" style="min-height:130px;margin-top:8px;font-family:ui-monospace,Consolas,monospace;font-size:12px"></textarea>
+      <div id="exprOut" class="tip"></div>
+      <div class="tip">上面的「模拟卡片」按 <code>字段: 值</code> 每行一条填，用来试表达式命中不命中。
+        测试用的是页面里同一份引擎（<code>expr.js</code>），这里通过就等于页面上会命中 —— 不是另写一份近似实现。</div>
+    </div>
+
+    <div class="card">
+      <h2>规则库 <small id="ruleCount"></small></h2>
+      <div class="grid" style="margin-bottom:10px">
+        <input type="text" id="search" placeholder="搜索名称 / 别名…" style="width:200px" />
+        <select id="fType">
+          <option value="">全部类型</option>
+          <option value="actress">女优</option>
+          <option value="tag">标签 / 类别</option>
+          <option value="maker">片商</option>
+          <option value="series">系列</option>
+          <option value="director">导演</option>
+          <option value="keyword">标题关键词</option>
+          <option value="code">番号 / 片商前缀</option>
+          <option value="expr">表达式</option>
+        </select>
+        <select id="fAction">
+          <option value="">全部动作</option>
+          <option value="block">屏蔽</option>
+          <option value="favorite">收藏</option>
+          <option value="highlight">高亮</option>
+        </select>
+        <span style="flex:1"></span>
+        <button id="undoBtn" title="撤销最近一次规则修改">↶ 撤销</button>
+        <button id="delFiltered" class="danger">删除当前筛选结果</button>
+      </div>
+      <div class="tip" style="margin:0 0 8px">
+        行首 <b>⠿</b> 可拖动排序，也可用操作列的 <b>↑ ↓</b> 调整；
+        打开「规则按顺序、首个命中生效」后，靠前的规则优先于靠后的。<br>
+        点 <b>✎</b> 展开编辑行，里面除了名称 / 别名 / 站点 / 分组，还有一个 <b>条件表达式</b> 输入框（高级用法，填了就忽略关键词与作用范围）。
+      </div>
+      <div id="conflictBox"></div>
+      <div id="ruleTable"></div>
+    </div>
+
+    <div class="card">
+      <h2>规则体检 <small id="auditCount"></small></h2>
+      <div id="auditBox"></div>
+    </div>
+  </div>
+
+  <!-- ================= 分组 ================= -->
+  <div class="pane" id="pane-groups">
+    <div class="card">
+      <h2>规则分组 <small>把规则归入分组，可一键启停整组（例如「临时试试」用完即关、「永久屏蔽」始终开）</small></h2>
+      <div class="grid" style="margin-bottom:10px">
+        <input type="text" id="gName" placeholder="新分组名称，如 临时试试" style="width:220px" />
+        <button class="primary" id="gAdd">新建分组</button>
+      </div>
+      <div id="groupTable"></div>
+      <div class="tip">未分组的规则始终生效。把规则归入分组后，只有该分组开启时规则才生效。在「规则管理」里点 ✎ 编辑即可指定分组。关闭分组 = 整组规则立即失效（页面会自动重新过滤）。</div>
+    </div>
+
+    <div class="card">
+      <h2>场景档位 <small id="profCount"></small></h2>
+      <div id="profBox"></div>
+    </div>
+  </div>
+
+  <!-- ================= 站点 ================= -->
+  <div class="pane" id="pane-sites">
+    <div class="card">
+      <h2>添加监管站点 <small>支持通配符，例如 *://*.javbus.com/* ；卡片选择器留空则自动识别</small></h2>
+      <div class="grid">
+        <input type="text" id="sPattern" placeholder="*://*.example.com/*" style="width:260px" />
+        <input type="text" id="sNote" placeholder="备注（可选）" style="width:160px" />
+        <input type="text" id="sSel" placeholder="卡片选择器（可选，如 .item）" style="width:200px" />
+        <button class="primary" id="sAdd">添加</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>站点列表</h2>
+      <div class="grid" style="margin-bottom:10px">
+        <span>预置模板</span>
+        <select id="tplSel"></select>
+        <button id="tplApply">套用到当前站点</button>
+        <span style="flex:1"></span>
+        <button id="tplAll">全部套用</button>
+      </div>
+      <div id="siteTable"></div>
+      <div class="tip">扩展默认已注入全部页面，但只有在列表内且已启用的网址上才会激活（显示悬浮球并执行过滤）。
+        若某站识别不到卡片：在页面右下角面板的「本页」页点 <b>🎯 点选卡片</b>，回到页面点一下卡片即可自动记住选择器；
+        也可在这里手动填 class（如 .item）。</div>
+    </div>
+  </div>
+
+  <!-- ================= 番号收藏夹 ================= -->
+  <div class="pane" id="pane-favcodes">
+    <div class="card">
+      <h2>番号收藏夹 <small id="fcCount"></small></h2>
+      <div class="grid" style="margin-bottom:10px">
+        <input type="text" id="fcSearch" placeholder="搜索番号 / 标题…" style="width:220px" />
+        <select id="fcFilter">
+          <option value="all">全部</option>
+          <option value="unseen">仅未看</option>
+          <option value="seen">仅已看</option>
+        </select>
+        <button id="fcAdd">手动添加番号</button>
+        <span style="flex:1"></span>
+        <button id="fcCopy">复制全部番号</button>
+        <button id="fcCsv">导出 CSV</button>
+        <button id="fcMd">导出 Markdown 片单</button>
+        <button id="fcHtml">导出 HTML 片单</button>
+        <button class="danger" id="fcClear">清空收藏夹</button>
+      </div>
+      <div id="fcTable"></div>
+      <div class="tip">在页面卡片上悬停，左上角会出现 ♥ 按钮，点击即收藏该番号（自动记录标题与链接）。
+        打开「只看★番号」开关后，列表只显示收藏的片子。</div>
+    </div>
+  </div>
+
+  <!-- ================= 发现 & 推荐 ================= -->
+  <div class="pane" id="pane-discover">
+    <div class="card">
+      <h2>每日推荐摘要 <small id="discSummary" style="font-weight:400;color:#8beeff"></small></h2>
+      <div class="tip">扩展在你浏览监管站点时，会默默记下见过的女优 / 标签 / 片商 / 系列（只记名字与出现次数，不记录任何观看行为）。
+        以下列出「见过但还没建规则」的内容，点按钮即可加入规则。</div>
+      <div class="grid" style="margin:10px 0 4px">
+        <button id="discBlockMaker">全部片商 → 一键屏蔽</button>
+        <button id="discBlockSeries">全部系列 → 一键屏蔽</button>
+        <button id="discBlockDirector">全部导演 → 一键屏蔽</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>发现库 <small id="discCount"></small></h2>
+      <div class="grid" style="margin-bottom:10px">
+        <input type="text" id="discSearch" placeholder="搜索名称…" style="width:200px" />
+        <select id="discType">
+          <option value="">全部类型</option>
+          <option value="actress">女优</option>
+          <option value="tag">标签</option>
+          <option value="maker">片商</option>
+          <option value="series">系列</option>
+          <option value="director">导演</option>
+        </select>
+        <select id="discFilter">
+          <option value="">全部</option>
+          <option value="new">仅新面孔（7 天内）</option>
+          <option value="today">仅今日新发现</option>
+        </select>
+        <span style="flex:1"></span>
+        <button id="discExport">导出发现库 JSON</button>
+        <button class="danger" id="discClear">清空发现库</button>
+      </div>
+      <div id="discTable"></div>
+    </div>
+
+    <div class="card">
+      <h2>发现库维护 <small>长期没再出现的条目可以清掉，减少存储体积</small></h2>
+      <div id="discStats" class="tip" style="margin-top:0"></div>
+      <div class="grid" style="align-items:center;margin-top:8px">
+        <span>清理阈值</span>
+        <select id="discPruneDays">
+          <option value="90">90 天未再出现</option>
+          <option value="180" selected>180 天未再出现</option>
+          <option value="365">365 天未再出现</option>
+        </select>
+        <button id="discPrune">清理这些条目</button>
+        <span style="flex:1"></span>
+        <button id="discExportHtml">导出单文件 HTML 清单</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>候选规则（自动学习）<small id="learnCount"></small></h2>
+      <div id="learnBox"></div>
+    </div>
+  </div>
+
+  <!-- ================= 数据看板 ================= -->
+  <div class="pane" id="pane-stats">
+    <div class="card">
+      <h2>数据看板</h2>
+      <div id="dashSummary" class="tip"></div>
+    </div>
+    <div class="card">
+      <h2>每日动作数 <small>近 30 天（右为今天，堆叠：屏蔽 / 收藏 / 高亮）</small></h2>
+      <div id="dashChart"></div>
+    </div>
+    <div class="card">
+      <h2>推荐采纳率 <small>近 30 天：收藏 / (收藏 + 屏蔽 + 看过)，越用越准</small></h2>
+      <div id="dashAdopt"></div>
+    </div>
+    <div class="card">
+      <h2>按维度汇总 <small>各维度规则的命中总量，一眼看出哪一类最常触发</small></h2>
+      <div id="dashByType"></div>
+    </div>
+    <div class="card">
+      <h2>规则命中 Top 10 <small>按累计命中次数排序</small></h2>
+      <div id="dashTop"></div>
+    </div>
+    <div class="card">
+      <h2>死规则清理 <small>长期 0 命中的规则可以删掉，减少每次过滤的计算量</small></h2>
+      <div id="dashDead"></div>
+    </div>
+    <div class="card">
+      <h2>月度回顾 <small id="monthCount"></small></h2>
+      <div id="monthBox"></div>
+    </div>
+  </div>
+
+  <!-- ================= 设置 ================= -->
+  <div class="pane" id="pane-settings">
+    <div class="card">
+      <h2>行为开关</h2>
+      <div class="grid" id="switches"></div>
+    </div>
+
+    <div class="card">
+      <h2>默认高亮颜色</h2>
+      <div class="grid" id="hlDots"></div>
+    </div>
+
+    <div class="card">
+      <h2>正则测试器 <small>输入正则（不含斜杠），逐行测试是否命中，用于调试标题 / 标签的正则规则</small></h2>
+      <div class="grid" style="margin-bottom:8px">
+        <input type="text" id="reTest" placeholder="输入正则，如 丝袜|高清|4K" style="width:300px" />
+      </div>
+      <textarea id="reSample" placeholder="每行一条测试文本，例如：&#10;高清 中文字幕&#10;丝袜 巨乳&#10;普通标签"></textarea>
+      <div id="reOut" class="tip"></div>
+    </div>
+
+    <div class="card">
+      <h2>每日推荐 <small>每天自动从发现库挑一批推荐，含头像与质量分；排除已收藏 / 屏蔽 / 近 30 天已推过的人</small></h2>
+      <div class="grid" style="align-items:center">
+        <label class="tg"><input type="checkbox" id="recOn" />启用每日推荐</label>
+        <label class="tg"><input type="checkbox" id="recNotify" />生成后弹浏览器通知</label>
+        <span>每日上限</span><input type="number" id="recMax" min="1" max="50" style="width:64px" />
+        <span>其中新面孔上限</span><input type="number" id="recNew" min="0" max="50" style="width:64px" />
+      </div>
+      <div class="grid" style="align-items:center;margin-top:8px">
+        <span>旧用户入选最低质量分</span><input type="number" id="recMin" min="0" max="100" style="width:64px" />
+        <span>不重复窗口（天）</span><input type="number" id="recWin" min="1" max="60" style="width:64px" />
+        <label class="tg"><input type="checkbox" id="recExcludeSeen" />排除已看过多的人</label>
+        <span>已看该人作品≥</span><input type="number" id="recSeenRatio" min="50" max="100" step="5" style="width:64px" /><span>% 才排除</span>
+      </div>
+      <div class="grid" style="align-items:center;margin-top:8px">
+        <span>推荐维度</span>
+        <label class="tg"><input type="checkbox" id="recDimA" value="actress" />女优</label>
+        <label class="tg"><input type="checkbox" id="recDimM" value="maker" />片商</label>
+        <label class="tg"><input type="checkbox" id="recDimS" value="series" />系列</label>
+      </div>
+      <div class="grid" style="align-items:center;margin-top:8px">
+        <label class="tg"><input type="checkbox" id="recAutoW" />用采纳率自动调权重</label>
+        <button id="recGen">立即生成今日推荐</button>
+        <button class="danger" id="recClearHist">清空推荐历史</button>
+      </div>
+      <div style="margin-top:10px">
+        <div style="font-size:12px;color:#8b93a7;margin-bottom:6px">质量分权重（四项合计 100%）</div>
+        <div class="grid" style="gap:14px 18px">
+          <label class="wlab">评分 <span id="wRatingV">40</span>%<input type="range" id="wRating" min="0" max="100" value="40" /></label>
+          <label class="wlab">作品数 <span id="wWorksV">25</span>%<input type="range" id="wWorks" min="0" max="100" value="25" /></label>
+          <label class="wlab">人气 <span id="wPopV">20</span>%<input type="range" id="wPop" min="0" max="100" value="20" /></label>
+          <label class="wlab">活跃度 <span id="wRecV">15</span>%<input type="range" id="wRec" min="0" max="100" value="15" /></label>
+        </div>
+      </div>
+      <div class="tip" id="recTip" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2>云同步（跨设备）</h2>
+      <div class="grid" style="align-items:center">
+        <label class="tg"><input type="checkbox" id="syncOn" />开启浏览器账号同步（换电脑自动带上规则 / 发现库 / 每日推荐）</label>
+        <button id="syncMigrate">立即同步到云端</button>
+      </div>
+      <div class="tip" id="syncTip" style="margin-top:8px">开启后走 Chrome / Edge 账号同步（不经任何服务器）。首次开启请点「立即同步到云端」把本机数据推上去。</div>
+    </div>
+
+    <div class="card">
+      <h2>软屏蔽 <small>灰化模糊 + 「仍然查看」临时放行；放行时长可调，记录可随时撤销</small></h2>
+      <div class="grid" style="align-items:center">
+        <span>放行有效期</span><input type="number" id="peekHours" min="1" max="720" style="width:70px" /><span>小时</span>
+        <span style="flex:1"></span>
+        <button class="danger" id="peekClearAll">清空放行记录</button>
+      </div>
+      <div id="peekList" style="margin-top:10px"></div>
+      <div class="tip" id="peekCount" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2>备份与数据</h2>
+      <div class="grid">
+        <button id="expBtn">导出 JSON 备份</button>
+        <button id="expEncBtn" title="AES-GCM 加密，适合放网盘 / 云盘">导出加密备份</button>
+        <button id="impBtn">导入备份（明文或加密）</button>
+        <input type="file" id="impFile" accept="application/json,.json" style="display:none" />
+        <button class="danger" id="clearSeen">清空「已看」记录</button>
+        <button class="danger" id="clearAll">清空全部数据</button>
+        <span style="flex:1"></span>
+        <button id="resetBall">重置悬浮球位置</button>
+      </div>
+      <div class="tip" id="dataTip"></div>
+      <div class="tip">加密备份用 <b>AES-GCM 256</b>，密钥由你设的密码经 <b>PBKDF2-SHA256（25 万次迭代）</b>推导，盐值与初始向量每次都重新随机。
+        扩展本身不保存密码 —— 忘掉密码就等于文件打不开，请自行记牢。<br>
+        导入时会自动识别是不是加密文件，是的话会向你要密码。</div>
+    </div>
+
+    <div class="card">
+      <h2>本地定时自动备份 <small>每天把一份 JSON 备份写进浏览器下载目录，纯本地、不连云</small></h2>
+      <div class="grid" style="align-items:center">
+        <label class="tg"><input type="checkbox" id="autoBackupOn" />启用每日自动备份到下载目录</label>
+        <button id="backupNow">立即备份一次</button>
+      </div>
+      <div class="tip" id="backupTip" style="margin-top:8px">备份文件保存为「下载/sitefilter-backup/sitefilter-日期.json」，同名覆盖，不会越攒越多。</div>
+    </div>
+
+    <div class="card">
+      <h2>错误日志 <small id="errCount"></small></h2>
+      <div class="grid" style="align-items:center">
+        <button id="errRefresh">刷新</button>
+        <button id="errExport">导出日志</button>
+        <button class="danger" id="errClear">清空日志</button>
+        <span style="flex:1"></span>
+        <label class="tg"><input type="checkbox" id="errDetail" />显示详情</label>
+      </div>
+      <div id="errTable" style="margin-top:10px"></div>
+      <div class="tip">扩展里所有被捕获的异常都会记到这里（最多 200 条，纯本地）。遇到「某个功能没反应」时先来这里看看。</div>
+    </div>
+
+    <div class="card">
+      <h2>快捷键 <small>点一下输入框，再按你想用的键；改完立即生效，不用重启</small></h2>
+      <div id="keysBox"></div>
+      <div class="grid" style="margin-top:10px">
+        <button id="keysReset">恢复默认键位</button>
+        <span id="keysWarn" class="keywarn" style="display:none"></span>
+      </div>
+      <div class="tip" id="keysTip"></div>
+      <div class="tip">
+        Esc 固定用于关闭面板，不参与自定义。冲突检查只在「同一组」内做：全局键必须配合 Alt，所以与面板内键不会撞车。<br>
+        另外：在卡片上右键 → 快捷菜单（屏蔽 / 收藏 / 高亮 / 加待看 / 复制番号 / 多站搜索）；选中页面文字后右键 → 用选中的词直接建规则。
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="expr.js"></script>
+<script src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>SiteFilter</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    width: 288px; margin: 0; padding: 12px;
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 13px; color: #e6e8ee; background: #151824;
+  }
+  h1 { margin: 0 0 10px; font-size: 14px; color: #fff; display: flex; align-items: center; gap: 6px; }
+  h1 small { font-weight: 400; color: #6f7893; font-size: 11px; }
+  .row { display: flex; gap: 6px; margin-bottom: 8px; }
+  .tg {
+    flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px;
+    padding: 7px 4px; border-radius: 8px; cursor: pointer; font-size: 12px;
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); color: #c9cfdd;
+  }
+  .tg.on { background: rgba(0,229,255,.15); border-color: rgba(0,229,255,.5); color: #8beeff; }
+  .tg input { display: none; }
+  .site {
+    padding: 9px 10px; border-radius: 9px; margin-bottom: 9px; font-size: 12px;
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+  }
+  .site .u { color: #8beeff; word-break: break-all; line-height: 1.5; }
+  .site .s { margin-top: 5px; font-weight: 600; }
+  .site .s.ok { color: #22c55e; }
+  .site .s.no { color: #ff4d6d; }
+  button.btn {
+    width: 100%; padding: 7px; border-radius: 8px; cursor: pointer; font-size: 12px;
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12); color: #dfe4ef;
+  }
+  button.btn:hover { background: rgba(255,255,255,.13); }
+  button.primary { background: rgba(0,229,255,.16); border-color: rgba(0,229,255,.45); color: #8beeff; }
+  .tip { margin-top: 9px; font-size: 11px; color: #6f7893; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <h1>SiteFilter <small>卡片过滤器</small></h1>
+
+  <div class="row">
+    <label class="tg" data-k="enabled"><input type="checkbox" />过滤</label>
+    <label class="tg" data-k="sfw"><input type="checkbox" />SFW</label>
+    <label class="tg" data-k="onlyFav"><input type="checkbox" />只看收藏</label>
+  </div>
+  <div class="row">
+    <label class="tg" data-k="boss"><input type="checkbox" />老板键</label>
+    <label class="tg" data-k="pinHighlight"><input type="checkbox" />高亮置顶</label>
+    <label class="tg" data-k="markSeen"><input type="checkbox" />标记已看</label>
+  </div>
+  <div class="row">
+    <label class="tg" data-k="onlyFavCode"><input type="checkbox" />只看★番号</label>
+    <label class="tg" data-k="favBtn"><input type="checkbox" />♥收藏按钮</label>
+    <label class="tg" data-k="watchBtn"><input type="checkbox" />⏳待看按钮</label>
+  </div>
+  <div class="row">
+    <label class="tg" data-k="showWhy"><input type="checkbox" />悬停查原因</label>
+    <label class="tg" data-k="softBlock"><input type="checkbox" />软屏蔽</label>
+    <label class="tg" data-k="previewMode"><input type="checkbox" />规则预览</label>
+    <label class="tg" data-k="probeLinks"><input type="checkbox" />链接探测</label>
+  </div>
+
+  <div class="site">
+    <div>当前页面</div>
+    <div class="u" id="url">-</div>
+    <div class="s" id="state">检测中…</div>
+  </div>
+
+  <button class="btn primary" id="addSite">把当前站点加入监管列表</button>
+  <div style="height:7px"></div>
+  <button class="btn" id="opt">打开完整设置（规则 / 站点 / 备份）</button>
+
+  <div class="tip">快捷键：Alt+F 面板 · Alt+S 模糊 · Alt+B 老板键<br>数据仅存本机，不上传。</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

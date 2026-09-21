@@ -1,0 +1,17 @@
+{
+  "name": "sitefilter",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SiteFilter 卡片过滤器（Chrome/Edge MV3 扩展）——测试与打包脚本的依赖清单，仅供开发用，不进扩展包。",
+  "scripts": {
+    "check": "python make_package.py --ci --no-unpacked",
+    "test": "python ci.py",
+    "package": "python make_package.py",
+    "release:patch": "python ci.py --release patch",
+    "release:minor": "python ci.py --release minor",
+    "release:major": "python ci.py --release major"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  }
+}

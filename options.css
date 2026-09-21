@@ -1,0 +1,106 @@
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 0 0 60px;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 13px; color: #e6e8ee; background: #11131c;
+}
+header {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 20px; background: #171a26; border-bottom: 1px solid rgba(255,255,255,.08);
+}
+header h1 { margin: 0; font-size: 16px; color: #fff; }
+header .sp { flex: 1; }
+header .meta { font-size: 11px; color: #6f7893; }
+
+.wrap { max-width: 1080px; margin: 0 auto; padding: 16px 20px; }
+
+.tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+.tabs button {
+  padding: 7px 16px; border-radius: 9px; cursor: pointer; font-size: 13px;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); color: #aab2c6;
+}
+.tabs button.on { background: rgba(0,229,255,.15); border-color: rgba(0,229,255,.45); color: #8beeff; font-weight: 600; }
+.pane { display: none; }
+.pane.on { display: block; }
+
+.card {
+  background: #171a26; border: 1px solid rgba(255,255,255,.08);
+  border-radius: 12px; padding: 14px; margin-bottom: 14px;
+}
+.card h2 { margin: 0 0 10px; font-size: 13px; color: #fff; }
+.card h2 small { font-weight: 400; color: #6f7893; font-size: 11px; }
+
+.grid { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+input[type=text], input[type=number], select, textarea {
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.13);
+  color: #fff; border-radius: 8px; padding: 6px 9px; font-size: 12px; outline: none;
+  font-family: inherit;
+}
+input:focus, select:focus, textarea:focus { border-color: rgba(0,229,255,.55); }
+textarea { width: 100%; min-height: 90px; resize: vertical; line-height: 1.7; }
+
+button {
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14);
+  color: #dfe4ef; border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 12px;
+  font-family: inherit;
+}
+button:hover { background: rgba(255,255,255,.14); }
+button.primary { background: rgba(0,229,255,.16); border-color: rgba(0,229,255,.45); color: #8beeff; }
+button.danger { background: rgba(255,77,109,.16); border-color: rgba(255,77,109,.45); color: #ffb3c1; }
+button.mini { padding: 3px 8px; font-size: 11px; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 7px 8px; text-align: left; border-bottom: 1px solid rgba(255,255,255,.06); vertical-align: middle; }
+th { font-size: 11px; color: #6f7893; font-weight: 500; text-transform: uppercase; letter-spacing: .4px; }
+td { font-size: 12px; }
+tr.off td { opacity: .4; }
+.val { color: #fff; font-weight: 600; }
+.alias { color: #8b93a7; font-size: 11px; }
+
+.chip {
+  display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600;
+  border: 1px solid currentColor;
+}
+.chip.block { color: #ff4d6d; background: rgba(255,77,109,.14); }
+.chip.favorite { color: #ffc93c; background: rgba(255,201,60,.14); }
+.chip.highlight { background: rgba(0,229,255,.12); }
+.chip.type { color: #8b93a7; background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.15); }
+
+.dot { width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(255,255,255,.25); cursor: pointer; }
+.dot.on { box-shadow: 0 0 0 2px rgba(255,255,255,.4); }
+
+.sw { display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px; border-radius: 8px; cursor: pointer;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); font-size: 12px; color: #c9cfdd; }
+.sw.on { background: rgba(0,229,255,.15); border-color: rgba(0,229,255,.45); color: #8beeff; }
+.sw input { accent-color: #00e5ff; margin: 0; }
+
+.empty { padding: 24px; text-align: center; color: #6f7893; font-size: 12px; }
+.tip { font-size: 11px; color: #6f7893; line-height: 1.7; margin-top: 8px; }
+.editrow td { background: rgba(255,255,255,.03); }
+.editrow .grid > * { flex: none; }
+
+/* ---- 快捷键自定义 ---- */
+.keygroup { margin-bottom: 10px; }
+.keygrouphd { font-size: 12px; color: #8beeff; margin-bottom: 6px; }
+.keycell {
+  display: inline-flex; align-items: center; gap: 8px; padding: 5px 9px; border-radius: 8px;
+  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1);
+}
+.keylab { font-size: 11px; color: #aab2c6; }
+input.keyin {
+  width: 84px; text-align: center; font-weight: 700; color: #00e5ff; cursor: pointer;
+  background: rgba(0,229,255,.08); border-color: rgba(0,229,255,.35);
+}
+input.keyin:focus { background: rgba(0,229,255,.18); }
+input.keyin.bad { color: #ffb3c1; background: rgba(255,77,109,.18); border-color: rgba(255,77,109,.55); }
+.keywarn { font-size: 11px; color: #ffb3c1; }
+
+/* ---- 条件表达式 ---- */
+code {
+  font-family: ui-monospace, Consolas, "Courier New", monospace; font-size: 11px;
+  color: #8beeff; background: rgba(0,229,255,.08); padding: 1px 5px; border-radius: 4px;
+}
+.tip.ok { color: #7ee0a5; }
+.tip.bad { color: #ffb3c1; }

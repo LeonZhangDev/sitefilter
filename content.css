@@ -1,0 +1,392 @@
+/* SiteFilter —— 作用于页面卡片本身的样式（全局注入，全部 !important 防止被站点 CSS 覆盖） */
+
+/* 屏蔽：完全隐藏，不占位，列表自动重排 */
+.cf-blocked {
+  display: none !important;
+}
+
+/* 收藏：金星描边 */
+.cf-fav {
+  position: relative !important;
+  outline: 2px solid #ffc93c !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 16px rgba(255, 201, 60, 0.55) !important;
+  border-radius: 6px !important;
+}
+.cf-fav::after {
+  content: "★";
+  position: absolute !important;
+  top: 4px;
+  right: 4px;
+  z-index: 2147483000 !important;
+  min-width: 20px;
+  height: 20px;
+  line-height: 20px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #241a00;
+  background: #ffc93c;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  pointer-events: none !important;
+}
+
+/* 高亮：彩色描边（颜色由 JS 写入 --cf-hl-color） */
+.cf-hl {
+  position: relative !important;
+  outline: 2px solid var(--cf-hl-color, #00e5ff) !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 14px var(--cf-hl-glow, rgba(0, 229, 255, 0.5)) !important;
+  border-radius: 6px !important;
+}
+
+/* 已看过：灰显 */
+.cf-seen {
+  position: relative !important;
+  opacity: 0.42 !important;
+  filter: grayscale(1) !important;
+}
+.cf-seen::before {
+  content: "已看";
+  position: absolute !important;
+  left: 4px;
+  bottom: 4px;
+  z-index: 2147483000 !important;
+  padding: 1px 6px;
+  font-size: 11px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.72);
+  border-radius: 4px;
+  pointer-events: none !important;
+}
+
+/* SFW 模式：缩略图模糊，悬停显示 */
+.cf-sfw img,
+.cf-sfw video {
+  filter: blur(18px) saturate(0.6) !important;
+  transition: filter 0.18s ease !important;
+}
+.cf-sfw:hover img,
+.cf-sfw:hover video {
+  filter: none !important;
+}
+
+/* 卡片容器：为 ♥ 收藏按钮提供定位上下文 */
+.cf-card {
+  position: relative !important;
+}
+
+/* 番号收藏按钮（hover 显示） */
+.cf-favbtn {
+  position: absolute !important;
+  top: 6px;
+  left: 6px;
+  z-index: 2147483001 !important;
+  width: 24px;
+  height: 24px;
+  border: 0 !important;
+  padding: 0 !important;
+  border-radius: 50% !important;
+  cursor: pointer !important;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif !important;
+  font-size: 13px !important;
+  line-height: 22px !important;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.55) !important;
+  color: #fff !important;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.cf-card:hover .cf-favbtn { opacity: 1 !important; }
+.cf-favbtn:hover { background: rgba(0, 0, 0, 0.85) !important; }
+.cf-favbtn.on { opacity: 1 !important; background: #ff4d6d !important; color: #fff !important; }
+
+/* 番号已收藏：粉色描边 + ♥ 徽章（区别于女优收藏的金色 ★） */
+.cf-favcode {
+  outline: 2px solid #ff4d6d !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 14px rgba(255, 77, 109, 0.5) !important;
+  border-radius: 6px !important;
+}
+.cf-favcode::after {
+  content: "♥";
+  position: absolute !important;
+  bottom: 4px;
+  right: 4px;
+  z-index: 2147483000 !important;
+  min-width: 20px;
+  height: 20px;
+  line-height: 20px;
+  text-align: center;
+  font-size: 13px;
+  color: #fff;
+  background: #ff4d6d;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  pointer-events: none !important;
+}
+
+/* 探测到的下载链接：绿色虚线标记 */
+.cf-dl {
+  outline: 2px dashed rgba(34, 197, 94, 0.95) !important;
+  outline-offset: 1px !important;
+  border-radius: 4px !important;
+  background: rgba(34, 197, 94, 0.1) !important;
+}
+
+/* 老板键：瞬间恢复原样（清掉所有标记类由 JS 完成，这里兜底） */
+html.cf-boss .cf-host {
+  display: none !important;
+}
+
+/* 待看队列：橙色虚线描边 + ⏳ 徽章 */
+.cf-watch {
+  outline: 2px dashed #ff9f1c !important;
+  outline-offset: 2px !important;
+  border-radius: 6px !important;
+}
+.cf-watch::before {
+  content: "⏳";
+  position: absolute !important;
+  top: 4px;
+  left: 34px;
+  z-index: 2147483000 !important;
+  min-width: 20px;
+  height: 20px;
+  line-height: 20px;
+  text-align: center;
+  font-size: 12px;
+  background: #ff9f1c;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  pointer-events: none !important;
+}
+
+/* 待看按钮（hover 显示，位于 ♥ 右侧） */
+.cf-watchbtn {
+  position: absolute !important;
+  top: 6px;
+  left: 34px;
+  z-index: 2147483001 !important;
+  width: 24px;
+  height: 24px;
+  border: 0 !important;
+  padding: 0 !important;
+  border-radius: 50% !important;
+  cursor: pointer !important;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif !important;
+  font-size: 12px !important;
+  line-height: 22px !important;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.55) !important;
+  color: #fff !important;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.cf-card:hover .cf-watchbtn { opacity: 1 !important; }
+.cf-watchbtn:hover { background: rgba(0, 0, 0, 0.85) !important; }
+.cf-watchbtn.on { opacity: 1 !important; background: #ff9f1c !important; color: #241a00 !important; }
+
+/* 悬停浮层：这张卡为什么被这样处理 */
+.cf-why {
+  position: fixed !important;
+  z-index: 2147483647 !important;
+  max-width: 230px;
+  padding: 7px 9px !important;
+  border-radius: 9px !important;
+  background: rgba(16, 18, 26, 0.97) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55) !important;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif !important;
+  font-size: 11px !important;
+  line-height: 1.5 !important;
+  color: #dfe4ef !important;
+  pointer-events: none !important;
+}
+.cf-why .cf-whytitle {
+  font-size: 10px !important;
+  color: #7a8399 !important;
+  margin-bottom: 4px !important;
+  letter-spacing: 0.3px;
+}
+.cf-why .cf-whyrow {
+  display: flex !important;
+  gap: 6px !important;
+  align-items: baseline !important;
+  margin-top: 2px !important;
+}
+.cf-why .cf-whya { font-weight: 700 !important; flex: none !important; }
+.cf-why .cf-whyt { color: #8b93a7 !important; flex: none !important; font-size: 10px !important; }
+.cf-why .cf-whyv {
+  color: #fff !important;
+  flex: 1 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+/* ================= 软屏蔽（灰化 + 模糊遮罩，可「仍然查看」临时放行） ================= */
+.cf-soft {
+  position: relative !important;
+  overflow: hidden !important;
+}
+.cf-soft::before {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 2147482500 !important;
+  backdrop-filter: blur(8px) grayscale(1) !important;
+  -webkit-backdrop-filter: blur(8px) grayscale(1) !important;
+  background: rgba(8, 10, 16, 0.42) !important;
+  transition: background 0.15s ease;
+}
+.cf-soft::after {
+  content: "已屏蔽" !important;
+  position: absolute !important;
+  top: 6px;
+  left: 6px;
+  z-index: 2147482600 !important;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif !important;
+  font-size: 10px !important;
+  line-height: 1.6 !important;
+  padding: 1px 6px !important;
+  border-radius: 8px !important;
+  background: rgba(255, 77, 109, 0.92) !important;
+  color: #fff !important;
+}
+.cf-soft .cf-peekbtn {
+  position: absolute !important;
+  z-index: 2147482601 !important;
+  left: 50% !important;
+  top: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  padding: 6px 14px !important;
+  border: 0 !important;
+  border-radius: 16px !important;
+  cursor: pointer !important;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  background: rgba(0, 229, 255, 0.92) !important;
+  color: #04222a !important;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5) !important;
+}
+.cf-soft .cf-peekbtn:hover { background: #8beeff !important; }
+
+/* 临时放行后的卡片：淡绿虚线描边，提示这是"手动放行"的 */
+.cf-peek { outline: 1px dashed rgba(126, 226, 168, 0.75) !important; outline-offset: -1px !important; }
+
+/* 评分 / 日期 快速筛选：被筛掉的卡片（注意必须放在本文件/light DOM，卡片不是 Shadow DOM 内的元素） */
+.cf-filt-out { display: none !important; }
+
+/* ================= 规则预览模式（不真正隐藏，只描边提示「将会被屏蔽」） ================= */
+.cf-preview {
+  position: relative !important;
+  outline: 2px dashed rgba(255, 77, 109, 0.9) !important;
+  outline-offset: -2px !important;
+  filter: grayscale(0.6) !important;
+  opacity: 0.62 !important;
+}
+.cf-preview::after {
+  content: "预览：将屏蔽" !important;
+  position: absolute !important;
+  top: 6px;
+  left: 6px;
+  z-index: 2147482600 !important;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif !important;
+  font-size: 10px !important;
+  line-height: 1.6 !important;
+  padding: 1px 6px !important;
+  border-radius: 8px !important;
+  background: rgba(255, 77, 109, 0.92) !important;
+  color: #fff !important;
+  pointer-events: none !important;
+}
+
+/* ================= 卡片键盘导航 当前项 ================= */
+.cf-card.cf-navcur {
+  outline: 2px solid #00e5ff !important;
+  outline-offset: 2px !important;
+}
+
+/* ================= 卡片右键菜单（页面内自绘） ================= */
+.cf-cardmenu {
+  position: fixed !important;
+  z-index: 2147483600 !important;
+  min-width: 176px;
+  max-width: 260px;
+  background: #1a1d26;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 4px;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 12px;
+  color: #dfe4ef;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+}
+.cf-cardmenu .ttl {
+  padding: 5px 10px;
+  color: #7a8399;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cf-cardmenu .sep { height: 1px; background: rgba(255, 255, 255, 0.09); margin: 4px 2px; }
+.cf-cardmenu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  color: inherit;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+}
+.cf-cardmenu button:hover { background: rgba(0, 229, 255, 0.14); color: #8beeff; }
+
+/* 番号多站直达链接（面板内） */
+.cf-gosrow { display: flex; gap: 4px; padding: 0 6px 6px 24px; flex-wrap: wrap; }
+.cf-mini.cf-gos { text-decoration: none; }
+
+
+/* ---------- 规则调试器浮层（注入页面，所以必须写在这里而不是面板的 Shadow DOM）---------- */
+.cf-dbgpanel {
+  position: fixed; right: 16px; top: 16px; width: 460px; max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px); overflow: auto; z-index: 2147483600;
+  background: #12161f; color: #dfe4ef; border: 1px solid rgba(140,160,200,.35);
+  border-radius: 10px; font: 12px/1.55 ui-monospace, Consolas, monospace;
+  box-shadow: 0 10px 34px rgba(0,0,0,.5);
+}
+.cf-dbg-hdbar { display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+  border-bottom: 1px solid rgba(140,160,200,.22); position: sticky; top: 0; background: #12161f; }
+.cf-dbg-hdbar b { font-size: 13px; color: #8beeff; }
+.cf-dbg-code { flex: 1; color: #96a0b8; }
+.cf-dbg-x { background: transparent; border: 1px solid rgba(140,160,200,.35); color: #cfd6e6;
+  border-radius: 6px; padding: 2px 8px; cursor: pointer; font: inherit; }
+.cf-dbg-x:hover { border-color: #8beeff; color: #8beeff; }
+.cf-dbg-ctx { padding: 8px 12px; border-bottom: 1px solid rgba(140,160,200,.16); color: #b9c2d6; }
+.cf-dbg-ctx b { color: #7d879e; font-weight: 400; }
+.cf-dbg-result { padding: 8px 12px; background: rgba(0,229,255,.06); border-bottom: 1px solid rgba(140,160,200,.16); }
+.cf-dbg-result b.ok { color: #4ade80; }
+.cf-dbg-result b.no { color: #96a0b8; }
+.cf-dbg-note { display: block; margin-top: 3px; color: #96a0b8; }
+.cf-dbg-list { padding: 4px 0; }
+.cf-dbg-row { padding: 7px 12px; border-bottom: 1px solid rgba(140,160,200,.1); }
+.cf-dbg-row.hit { background: rgba(74,222,128,.05); }
+.cf-dbg-hd { color: #dfe4ef; }
+.cf-dbg-hd b { color: #5d6580; font-weight: 400; }
+.cf-dbg-steps { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px; }
+.cf-dbg-step { border: 1px solid rgba(140,160,200,.25); border-radius: 4px; padding: 1px 5px; color: #96a0b8; }
+.cf-dbg-step.ok { border-color: rgba(74,222,128,.45); color: #4ade80; }
+.cf-dbg-step.no { border-color: rgba(248,113,113,.35); color: #f87171; }
+.cf-dbg-tag { margin-left: 4px; border-radius: 4px; padding: 0 5px; border: 1px solid rgba(140,160,200,.3); color: #96a0b8; }
+.cf-dbg-tag.ok { border-color: rgba(74,222,128,.5); color: #4ade80; }
+.cf-dbg-tag.warn { border-color: rgba(251,191,36,.5); color: #fbbf24; }
+.cf-dbg-tag.dim { opacity: .65; }
+.cf-dbg-exp { margin-top: 3px; color: #fbbf24; }
+.cf-dbg-empty { padding: 12px; color: #5d6580; text-align: center; }

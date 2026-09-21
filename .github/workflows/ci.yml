@@ -1,0 +1,50 @@
+name: CI
+
+# 每次推送 / PR 都跑一遍完整门禁：
+#   ① JS 语法检查  ② 全部测试套件（10 套）  ③ manifest 校验 + 试打包
+# 只要有任何失败，这个 workflow 变红 —— 门禁与本地 `python ci.py` 是同一份逻辑。
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  gate:
+    name: 门禁（语法 + 测试 + 打包校验）
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖（jsdom）
+        run: npm install --no-audit --no-fund
+
+      - name: 跑门禁
+        run: python ci.py --out build
+
+      - name: 上传产物
+        if: matrix.node == 22
+        uses: actions/upload-artifact@v4
+        with:
+          name: sitefilter-zip
+          path: |
+            build/*.zip
+            build/build-info.json
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "SiteFilter 卡片过滤器",
+  "version": "1.1.0",
+  "description": "在指定网站右下角提供悬浮面板，按女优/标签/关键词屏蔽、收藏、高亮内容卡片。数据 100% 本地存储，不上传任何信息。",
+  "permissions": [
+    "storage",
+    "contextMenus",
+    "tabs",
+    "activeTab",
+    "alarms",
+    "notifications",
+    "downloads"
+  ],
+  "action": {
+    "default_title": "SiteFilter 卡片过滤器",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_new_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "expr.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}
