@@ -113,7 +113,14 @@ setTimeout(() => {
   check('冲突警告框含一键修复按钮', !!doc.querySelector('#fixConflicts'));
 
   check('分组表渲染出 1 个分组', doc.querySelectorAll('#groupTable tbody tr[data-id]').length === 1);
-  check('站点表渲染出 2 个站点', doc.querySelectorAll('#siteTable tbody tr').length === 2);
+  const siteRows = doc.querySelectorAll('#siteTable tbody tr');
+  // 匹配规则渲染在 input 的 value 里，textContent 取不到，必须读 value
+  const sitePats = Array.prototype.map.call(
+    doc.querySelectorAll('#siteTable tbody tr input[data-f="pattern"]'), i => i.value);
+  check('站点表渲染出播种的 2 个站点',
+    sitePats[0] === '*://*.javbus.com/*' && sitePats[1] === '*://*.javdb580.com/*');
+  // v5 起迁移会把新增的默认站点补进来，所以 >= 2 而不是 === 2
+  check('站点表补齐了默认站点（>= 播种数量）', siteRows.length >= 2);
   check('预置模板下拉已填充', doc.querySelector('#tplSel').options.length >= 5);
 
   check('番号收藏夹渲染出 2 条', doc.querySelectorAll('#fcTable tbody tr[data-c]').length === 2);

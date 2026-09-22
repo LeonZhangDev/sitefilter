@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>SiteFilter 悬浮球 · 样式预览</title>
+<style>
+/* 本页只用来预览悬浮球外观，样式与 content.js 的 UI_CSS 中 .cf-ball 一段保持一致。
+   改了 content.js 里的球体样式，这里也要跟着改（纯预览，不参与打包）。 */
+body{margin:0;background:#0d1017;color:#dfe4ef;
+  font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;font-size:13px;padding:24px 28px;}
+h1{font-size:16px;font-weight:600;margin:0 0 6px;}
+p.sub{margin:0 0 22px;color:#7a8399;line-height:1.7;}
+.row{display:flex;gap:34px;flex-wrap:wrap;align-items:flex-end;margin-bottom:26px;}
+.cell{text-align:center;}
+.cell .cap{margin-top:12px;color:#8b93a7;font-size:12px;line-height:1.6;}
+.cell .cap b{display:block;color:#dfe4ef;font-weight:600;}
+
+.stage{position:relative;width:120px;height:110px;border:1px dashed rgba(255,255,255,.09);
+  border-radius:12px;background:
+  repeating-linear-gradient(45deg,rgba(255,255,255,.02) 0 8px,transparent 8px 16px);}
+.stage .cf-ball{right:24px !important;bottom:24px !important;}
+
+.cf-ball{position:absolute;width:48px;height:48px;border-radius:50%;cursor:pointer;display:flex;
+  align-items:center;justify-content:center;
+  background:radial-gradient(circle at 32% 26%,#39415f 0%,#242a3d 52%,#141822 100%);
+  border:1px solid rgba(255,255,255,.15);user-select:none;font-size:20px;line-height:1;color:var(--hl,#8bd5ff);
+  box-shadow:0 8px 22px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.14),inset 0 -6px 12px rgba(0,0,0,.35);
+  transition:transform .16s cubic-bezier(.2,.8,.3,1),box-shadow .18s,color .18s,filter .18s;}
+.cf-ball:hover{transform:scale(1.09);color:#eafcff;
+  box-shadow:0 12px 28px rgba(0,0,0,.55),0 0 0 5px rgba(0,229,255,.10),inset 0 1px 0 rgba(255,255,255,.2);}
+.cf-ball:active{transform:scale(.95);}
+.cf-ball.dragging{transform:scale(1.13);cursor:grabbing;
+  box-shadow:0 16px 34px rgba(0,0,0,.6),0 0 0 7px rgba(0,229,255,.14);}
+.cf-ball.locked{cursor:pointer;}
+.cf-ball.locked::after{content:"\1F512";position:absolute;right:-3px;bottom:-3px;width:17px;height:17px;
+  border-radius:50%;background:#151824;border:1px solid rgba(255,255,255,.2);font-size:9px;
+  line-height:16px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,.5);}
+.cf-ball.off{opacity:.4;}
+.cf-ball.hot{color:#ffc93c;border-color:rgba(255,201,60,.6);}
+
+.sw{display:flex;gap:8px;align-items:center;margin-top:4px;}
+button.swbtn{padding:5px 12px;border-radius:7px;border:1px solid rgba(255,255,255,.14);
+  background:rgba(255,255,255,.05);color:#dfe4ef;cursor:pointer;font-size:12px;}
+button.swbtn:hover{background:rgba(255,255,255,.13);}
+.note{margin-top:8px;color:#6f7893;font-size:12px;line-height:1.7;}
+</style>
+</head>
+<body>
+<h1>SiteFilter 悬浮球 · 样式预览</h1>
+<p class="sub">鼠标悬停 / 按下可以看状态变化。三个球都是同一份样式，只有 class 不同。</p>
+
+<div class="row">
+  <div class="cell">
+    <div class="stage"><div class="cf-ball" id="b1">◈</div></div>
+    <div class="cap"><b>常态</b>未锁定，可拖动</div>
+  </div>
+  <div class="cell">
+    <div class="stage"><div class="cf-ball locked" id="b2">◈</div></div>
+    <div class="cap"><b>已锁定</b>右下角挂锁，拖不动但仍能点击开合</div>
+  </div>
+  <div class="cell">
+    <div class="stage"><div class="cf-ball dragging" id="b3">◈</div></div>
+    <div class="cap"><b>拖动中</b>放大 + 光晕</div>
+  </div>
+  <div class="cell">
+    <div class="stage"><div class="cf-ball hot" id="b4">◈</div></div>
+    <div class="cap"><b>有新推荐</b>琥珀色提醒</div>
+  </div>
+</div>
+
+<div class="sw">
+  <span>主色跟随「高亮色」设置：</span>
+  <button class="swbtn" data-c="#00e5ff">青</button>
+  <button class="swbtn" data-c="#ff4d6d">红</button>
+  <button class="swbtn" data-c="#7c5cff">紫</button>
+  <button class="swbtn" data-c="#22c55e">绿</button>
+</div>
+
+<div class="note">
+  锁定 / 解锁三种入口：面板标题栏的锁按钮 · Alt+L · 设置页开关「锁定悬浮球位置」。<br>
+  面板内其余按钮统一加了按下回弹与键盘聚焦环。
+</div>
+
+<script>
+document.querySelectorAll('.swbtn').forEach(function(b){
+  b.addEventListener('click', function(){
+    document.body.style.setProperty('--hl', b.dataset.c);
+  });
+});
+// 演示：按住 200ms 后切到 dragging 态，松开还原
+var t=null;
+document.getElementById('b1').addEventListener('mousedown', function(){
+  t=setTimeout(function(){ document.getElementById('b1').classList.add('dragging'); },200);
+});
+window.addEventListener('mouseup', function(){
+  clearTimeout(t); document.getElementById('b1').classList.remove('dragging');
+});
+</script>
+</body>
+</html>

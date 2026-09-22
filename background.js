@@ -5,7 +5,7 @@
 'use strict';
 
 var DATA_KEY = 'sf_data_v1';
-var SCHEMA_VERSION = 4;   // 与 content.js / options.js 保持一致
+var SCHEMA_VERSION = 5;   // 与 content.js / options.js 保持一致
 
 /* ---------------- 本地错误日志（与 content.js 共用同一份 errLog） ---------------- */
 var ERR_MAX = 200;
@@ -47,7 +47,8 @@ var DEFAULT_SETTINGS = {
   keys: {},
   autoBackup: false,
   hlColor: '#00e5ff',
-  ball: { right: 24, bottom: 24 }
+  ball: { right: 24, bottom: 24 },
+  ballLock: false
 };
 
 var DEFAULT_SITES = [
@@ -55,7 +56,10 @@ var DEFAULT_SITES = [
   { id: 's_xchina', pattern: '*://*.xchina.co/*', enabled: true, selector: '', note: 'xchina' },
   { id: 's_javdb571', pattern: '*://*.javdb571.com/*', enabled: true, selector: '', note: 'JavDB 镜像' },
   { id: 's_javdb', pattern: '*://*.javdb.com/*', enabled: true, selector: '', note: 'JavDB' },
-  { id: 's_javdb580', pattern: '*://*.javdb580.com/*', enabled: true, selector: '', note: 'JavDB 镜像580' }
+    { id: 's_javdb580', pattern: '*://*.javdb580.com/*', enabled: true, selector: '', note: 'JavDB 镜像580' },
+    { id: 's_pornhub', pattern: '*://*.pornhub.com/*', enabled: true, selector: '', note: 'PornHub' },
+    { id: 's_youporn', pattern: '*://*.youporn.com/*', enabled: true, selector: '', note: 'YouPorn' },
+    { id: 's_xsijishe', pattern: '*://*.xsijishe.net/*', enabled: true, selector: '', note: 'xsijishe（求出处）' }
 ];
 
 // 存储区：开启云同步则走 sync，否则 local。两份始终镜像，保证本机读取一致。
@@ -108,6 +112,16 @@ function migrate(d) {
       x.profiles = x.profiles || [];
       x.activeProfile = x.activeProfile || '';
       x.expiredLog = x.expiredLog || [];
+    },
+    // v4 → v5：站点模板化。按 id 把缺的默认站点补齐（与 content.js / options.js 同一份逻辑）
+    5: function (x) {
+      x.sites = x.sites || [];
+      var have = {};
+      x.sites.forEach(function (s) { if (s && s.id) have[s.id] = 1; });
+      DEFAULT_SITES.forEach(function (s) {
+        if (have[s.id]) return;
+        x.sites.push({ id: s.id, pattern: s.pattern, enabled: true, selector: '', note: s.note });
+      });
     }
   };
   for (var v = from + 1; v <= SCHEMA_VERSION; v++) {
