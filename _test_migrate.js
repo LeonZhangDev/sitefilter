@@ -75,7 +75,9 @@ function load(seed) {
   check('迁移补齐 errLog（数组）', Array.isArray(migrated.errLog));
   check('迁移补齐 statsLog / groups / dailyRecs',
     !!migrated.statsLog && Array.isArray(migrated.groups) && !!migrated.dailyRecs);
-  check('迁移保留原有 sites', (migrated.sites || []).length === before.sites);
+  check('迁移保留原有 sites（不被清空/覆盖）', (migrated.sites || []).some(s => s.id === 's1'));
+  // v5 起迁移会顺带补齐新增的默认站点，所以总数会增加而不是保持不变
+  check('迁移顺带补齐默认站点', (migrated.sites || []).length > before.sites);
   check('迁移保留原有 rules', (migrated.rules || []).length === before.rules);
   check('迁移保留原有 seen', !!migrated.seen['OLD-001']);
   check('迁移保留原有 discovered', !!migrated.discovered['actress|老人']);
@@ -235,6 +237,39 @@ function load(seed) {
       check(f + ' 里出现字段 ' + k + '（防整体写回丢字段）', re.test(s));
     });
   });
+}
+
+/* ============ ③x 三处「默认设置 / 默认键位」必须一致 ============
+   content.js / background.js / options.js 各存一份 DEFAULT_SETTINGS 与
+   DEFAULT_KEYS。漏改一处的表现很隐蔽：设置页上开关不显示、或者快捷键
+   按下去没反应（会被 normKeys 静默回落成默认值）。 */
+{
+  const src = {};
+  ['content.js', 'background.js', 'options.js'].forEach(f => {
+    src[f] = fs.readFileSync(path.join(__dirname, f), 'utf8');
+  });
+
+  // 本轮新增：ballLock（锁定悬浮球位置）
+  ['content.js', 'background.js', 'options.js'].forEach(f => {
+    check(f + ' 的 DEFAULT_SETTINGS 带 ballLock', /ballLock:\s*false/.test(src[f]));
+  });
+
+  const keyNames = (s) => {
+    const m = s.match(/var DEFAULT_KEYS = \{[\s\S]*?\};/);
+    if (!m) return [];
+    return (m[0].match(/([a-zA-Z]+):\s*'[a-z0-9]+'/g) || [])
+      .map(x => x.split(':')[0].trim()).sort();
+  };
+  const kc = keyNames(src['content.js']);
+  const ko = keyNames(src['options.js']);
+  check('content.js 解析出 DEFAULT_KEYS（' + kc.join(',') + '）', kc.length >= 8);
+  check('content.js 与 options.js 的 DEFAULT_KEYS 键名完全一致',
+    kc.length > 0 && kc.join('|') === ko.join('|'));
+  check('默认键位含 lock（Alt+L 锁球）', kc.indexOf('lock') !== -1 && ko.indexOf('lock') !== -1);
+  check('content.js 处理了 Alt+L', /keyOf\('lock'\)/.test(src['content.js']));
+  check('设置页开关列表含 ballLock', /\['ballLock',/.test(src['options.js']));
+  check('content.js 拖动前检查 ballLock', /if \(S\.settings\.ballLock\) return;/.test(src['content.js']));
+  check('content.js 有锁定状态的球体样式', /\.cf-ball\.locked/.test(src['content.js']));
 }
 
 /* ============ ④ 更高版本数据：不崩，只记日志 ============ */

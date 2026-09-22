@@ -10,7 +10,7 @@
   window.__SITEFILTER_LOADED__ = true;
 
   var DATA_KEY = 'sf_data_v1';
-  var SCHEMA_VERSION = 4;   // 数据结构版本：改结构时 +1，并在 migrate() 里补一步
+  var SCHEMA_VERSION = 5;   // 数据结构版本：改结构时 +1，并在 migrate() 里补一步
   var DEBUG = false;
   function log() { if (DEBUG) console.log.apply(console, ['[SF]'].concat([].slice.call(arguments))); }
 
@@ -64,6 +64,7 @@
     probeAnySite: true,   // 非监管站点也启用探测
     hlColor: '#00e5ff',   // 默认高亮色
     ball: { right: 24, bottom: 24 },
+    ballLock: false,        // 锁定悬浮球位置：锁定后拖不动（防误挪），点击仍能开合面板
     onboarded: false,       // 是否已看过新手引导
     lastRecDay: '',         // 上次看过推荐页的日期（用于每日自动推荐）
     showWhy: true,          // 悬停卡片显示「为什么被处理」浮层
@@ -88,6 +89,7 @@
     panel: 'f',    // Alt+F 展开 / 收起面板
     sfw: 's',      // Alt+S SFW 缩略图模糊
     boss: 'b',     // Alt+B 老板键
+    lock: 'l',     // Alt+L 锁定 / 解锁悬浮球位置
     prev: 'k',     // 上一条
     next: 'j',     // 下一条
     block: 'b',    // 屏蔽当前卡片的全部女优
@@ -139,35 +141,114 @@
     return k.charAt(0).toUpperCase() + k.slice(1);
   }
 
-  var DEFAULT_SITES = [
-    { id: 's_javbus', pattern: '*://*.javbus.com/*', enabled: true, selector: '', note: 'JavBus' },
-    { id: 's_xchina', pattern: '*://*.xchina.co/*', enabled: true, selector: '', note: 'xchina' },
-    { id: 's_javdb571', pattern: '*://*.javdb571.com/*', enabled: true, selector: '', note: 'JavDB 镜像' },
-    { id: 's_javdb', pattern: '*://*.javdb.com/*', enabled: true, selector: '', note: 'JavDB' },
-    { id: 's_javdb580', pattern: '*://*.javdb580.com/*', enabled: true, selector: '', note: 'JavDB 镜像580' }
+  /* ---------------- 站点模板：全站唯一事实来源 ----------------
+   * 新增/修改一个站点只改这一张表。下面的 DEFAULT_SITES / KNOWN_SELECTORS /
+   * SELECTOR_TEMPLATES / CODE_SITES / 维度识别规则 全部由它派生。
+   *
+   *   id       唯一标识（进 sites 用，迁移时按 id 去重补新站）
+   *   name     显示名
+   *   pattern  监管站点匹配规则；有值才可能进 DEFAULT_SITES
+   *   host     主机名正则，用于按域名取模板
+   *   sel      候选卡片选择器（按优先级依次尝试）
+   *   tpl      设置页「套用预置模板」用的主选择器；留空 = 不出现在模板下拉
+   *   enabled  是否默认进监管列表（false = 只贡献选择器，需用户手动添加）
+   *   sbtn     番号多站直达的按钮短名；配合 search 使用
+   *   search   番号搜索 URL 模板（{q} 为番号占位）；有值才进多站直达
+   *   code     是否番号体系（false 时只从标题里猜番号，不从链接路径猜）
+   *   rowMode  列表是「表格行 / 无图条目」（论坛类），需要另一套识别与可见性判定
+   *   dims     该站专属的维度识别规则，先于全局 LINK_KINDS 匹配 */
+  var SITE_TEMPLATES = [
+    {
+      id: 's_javbus', name: 'JavBus', pattern: '*://*.javbus.com/*', host: /javbus/i,
+      sel: ['.item', 'a.movie-box', '.movie-box'], tpl: '.item', tplTest: 'javbus', enabled: true,
+      sbtn: 'Bus', search: 'https://www.javbus.com/{q}', code: true
+    },
+    {
+      id: 's_xchina', name: 'xchina', pattern: '*://*.xchina.co/*', host: /xchina/i,
+      sel: ['.item', '.video-item', '.video-list li', '.card', 'li.video'], tpl: '.item', tplTest: 'xchina', enabled: true,
+      sbtn: 'XC', search: 'https://xchina.co/search/{q}', code: false
+    },
+    {
+      id: 's_javdb', name: 'JavDB', pattern: '*://*.javdb.com/*', host: /javdb/i,
+      sel: ['.item', 'a.box', '.movie-box', '.grid-item'],       tpl: '.item', tplTest: 'javdb', enabled: true, mirror: 'javdb',
+      sbtn: 'DB', search: 'https://javdb.com/search?q={q}&f=all', code: true
+    },
+    {
+      id: 's_javdb571', name: 'JavDB 镜像', pattern: '*://*.javdb571.com/*', host: /javdb571/i,
+      sel: ['.item', 'a.box', '.movie-box', '.grid-item'], enabled: true, mirror: 'javdb', code: true
+    },
+    {
+      id: 's_javdb580', name: 'JavDB 镜像580', pattern: '*://*.javdb580.com/*', host: /javdb580/i,
+      sel: ['.item', 'a.box', '.movie-box', '.grid-item'], enabled: true, mirror: 'javdb',
+      sbtn: '580', search: 'https://javdb580.com/search?q={q}&f=all', code: true
+    },
+    {
+      id: 's_pornhub', name: 'PornHub', pattern: '*://*.pornhub.com/*', host: /pornhub/i,
+      sel: ['li.pcVideoListItem', '.videoBox', '#videoSearchResult li', '.phimage', '.item'],
+      tpl: 'li.pcVideoListItem', tplTest: 'pornhub', enabled: true, code: false,
+      sbtn: 'PH', search: 'https://www.pornhub.com/video/search?search={q}',
+      idFrom: /[?&]viewkey=([0-9a-z]+)/i, idPrefix: 'ph',
+      dims: [
+        { kind: 'actress', href: /(\/pornstar\/|\/pornstars\/|\/models?\/|pornstar=)/i, cls: /(pornstar|usernameBadge)/i },
+        { kind: 'maker', href: /(\/channels?\/|\/channel\/)/i, cls: /(channel)/i },
+        { kind: 'tag', href: /(\/categories\/|\/category\/|\/tags?\/|\/video\?c=)/i, cls: /(category|tag)/i }
+      ]
+    },
+    {
+      id: 's_youporn', name: 'YouPorn', pattern: '*://*.youporn.com/*', host: /youporn/i,
+      sel: ['li.videoBox', '.video-box', 'li.video', '.item', '.card'],
+      tpl: 'li.videoBox', tplTest: 'youporn', enabled: true, code: false,
+      sbtn: 'YP', search: 'https://www.youporn.com/search/?query={q}',
+      idFrom: /\/watch\/(\d+)/i, idPrefix: 'yp',
+      dims: [
+        { kind: 'actress', href: /(\/pornstar\/|\/pornstars\/|\/models?\/)/i, cls: /(pornstar|model)/i },
+        { kind: 'maker', href: /(\/channels?\/)/i, cls: /(channel)/i },
+        { kind: 'tag', href: /(\/categories\/|\/category\/|\/tags?\/)/i, cls: /(category|tag)/i }
+      ]
+    },
+    {
+      id: 's_xsijishe', name: 'xsijishe（求出处）', pattern: '*://*.xsijishe.net/*', host: /xsijishe/i,
+      sel: ['#threadlist tbody tr', '.nex_forum_lists li', 'tbody tr'],
+      tpl: '#threadlist tbody tr', tplTest: 'xsijishe', enabled: true, code: false, rowMode: true,
+      idFrom: /(?:thread-|tid=)(\d+)/i, idPrefix: 'dz',
+      dims: [
+        { kind: 'tag', href: /(forum-|forumdisplay|mod=forumdisplay)/i, cls: /(forum)/i },
+        { kind: 'actress', href: /(space-uid-|mod=space|uid=)/i, cls: /(authi|author)/i }
+      ]
+    },
+    // 以下站点不进监管列表，只为「用户手动添加后立刻能识别」而预置选择器
+    {
+      id: 't_avmoo', name: 'AVMOO / AVSOX', host: /(avmoo|avsox|airav|busjav)/i,
+      sel: ['.item', '.movie-box', 'a.movie-box'], tpl: '.item', tplTest: 'avmoo', enabled: false
+    },
+    {
+      id: 't_forum', name: '色花堂 / 高清', host: /(sehuatang|hdsky|t66y|sexinsex)/i,
+      sel: ['.item', '.card', 'li.media', 'tbody tr'], tpl: '.card', tplTest: 'sehuatang', enabled: false
+    },
+    {
+      id: 't_javlib', name: 'JavLibrary', host: /(jav321|javlibrary|freejavbt|javhoo|javgg)/i,
+      sel: ['.item', '.movie-box', '.grid-item', '.card', '.video'], tpl: '.item', tplTest: 'javlibrary', enabled: false
+    }
   ];
 
-  // 已知站点的卡片选择器（按 hostname 关键字匹配，命中失败会自动走通用识别）
-  var KNOWN_SELECTORS = [
-    { test: /javbus/i, sel: ['.item', 'a.movie-box', '.movie-box'] },
-    { test: /javdb/i, sel: ['.item', 'a.box', '.movie-box', '.grid-item'] },
-    { test: /xchina/i, sel: ['.item', '.video-item', '.video-list li', '.card', 'li.video'] },
-    { test: /(avmoo|avsox|airav|busjav)/i, sel: ['.item', '.movie-box', 'a.movie-box'] },
-    { test: /(sehuatang|hdsky|t66y|sexinsex)/i, sel: ['.item', '.card', 'li.media', 'tbody tr'] },
-    { test: /(jav321|javlibrary|freejavbt|javhoo|javgg)/i, sel: ['.item', '.movie-box', '.grid-item', '.card', '.video'] }
-  ];
+  // 由模板派生：默认监管站点
+  var DEFAULT_SITES = SITE_TEMPLATES.filter(function (t) { return t.enabled && t.pattern; })
+    .map(function (t) {
+      return { id: t.id, pattern: t.pattern, enabled: true, selector: '', note: t.name };
+    });
 
-  // 设置页「套用预置模板」用：站点关键字 → 推荐选择器
-  var SELECTOR_TEMPLATES = [
-    { name: 'JavBus', test: 'javbus', sel: '.item' },
-    { name: 'JavDB / 镜像', test: 'javdb', sel: '.item' },
-    { name: 'xchina', test: 'xchina', sel: '.item' },
-    { name: 'AVMOO / AVSOX', test: 'avmoo', sel: '.item' },
-    { name: '色花堂 / 高清', test: 'sehuatang', sel: '.card' },
-    { name: 'JavLibrary', test: 'javlibrary', sel: '.item' }
-  ];
+  // 由模板派生：已知站点的卡片选择器（按 hostname 匹配，命中失败会自动走通用识别）
+  var KNOWN_SELECTORS = SITE_TEMPLATES.filter(function (t) { return t.sel && t.sel.length; })
+    .map(function (t) { return { test: t.host, sel: t.sel }; });
 
-  // 元数据链接识别：顺序敏感，命中即停。分别对应 类别/片商/系列/导演/女优
+  // 由模板派生：设置页「套用预置模板」用（options.js 的 TPL_SELECTORS 是同一份数据的副本，
+  // 由 _test_sites.js 断言两边一致）
+  // 由模板派生（tplTest 是设置页用来匹配站点 pattern 的关键字，必须显式给 ——
+  // 不能从 host 正则里截，多分支正则会截出 '(avmoo' 这种永远匹配不上的值）
+  var SELECTOR_TEMPLATES = SITE_TEMPLATES.filter(function (t) { return t.tpl; })
+    .map(function (t) { return { name: t.name, test: t.tplTest || '', sel: t.tpl }; });
+
+  // 元数据链接识别（全局兜底）：顺序敏感，命中即停。分别对应 类别/片商/系列/导演/女优
   var LINK_KINDS = [
     { kind: 'series', href: /(\/series\/|series=)/i, cls: /(series)/i },
     { kind: 'maker', href: /(studio|maker|label|company|brand|vendor|\/makers\/|\/studios\/)/i, cls: /(studio|maker|label|brand)/i },
@@ -175,6 +256,29 @@
     { kind: 'tag', href: /(genre|category|\/tags?\/|tag=|keyword)/i, cls: /(genre|category|tags?\b)/i },
     { kind: 'actress', href: /(\/star\/|\/star\b|actress|actor|\/actors\/|\/stars\/|\/model\/|performer|\/cast\/|av-star|star=)/i, cls: /(star|actor|actress|model|performer)/i }
   ];
+
+  /* 按主机名取模板 / 取该站生效的维度规则（站点专属 dims 优先，再回落全局）。
+     结果按 host 缓存，避免每轮 pass 反复拼数组。 */
+  var _tplCache = {};
+  function templateForHost(host) {
+    host = String(host || '');
+    if (_tplCache[host] !== undefined) return _tplCache[host];
+    var hit = null;
+    for (var i = 0; i < SITE_TEMPLATES.length; i++) {
+      if (SITE_TEMPLATES[i].host.test(host)) { hit = SITE_TEMPLATES[i]; break; }
+    }
+    _tplCache[host] = hit;
+    return hit;
+  }
+  var _kindsCache = {};
+  function linkKindsFor(host) {
+    host = String(host || '');
+    if (_kindsCache[host]) return _kindsCache[host];
+    var tpl = templateForHost(host);
+    var list = (tpl && tpl.dims) ? tpl.dims.concat(LINK_KINDS) : LINK_KINDS;
+    _kindsCache[host] = list;
+    return list;
+  }
 
   // 不同维度的默认作用范围
   var SCOPE_OF = {
@@ -232,13 +336,9 @@
   /* 键盘导航当前卡片下标 */
   var navIdx = -1;
 
-  /* 番号多站直达：纯本地拼 URL，零网络请求 */
-  var CODE_SITES = [
-    { n: 'Bus', tpl: 'https://www.javbus.com/{q}' },
-    { n: 'DB', tpl: 'https://javdb.com/search?q={q}&f=all' },
-    { n: '580', tpl: 'https://javdb580.com/search?q={q}&f=all' },
-    { n: 'XC', tpl: 'https://xchina.co/search/{q}' }
-  ];
+  /* 番号多站直达：纯本地拼 URL，零网络请求。由站点模板的 sbtn + search 派生 */
+  var CODE_SITES = SITE_TEMPLATES.filter(function (t) { return t.sbtn && t.search; })
+    .map(function (t) { return { n: t.sbtn, tpl: t.search }; });
   function codeSearchBtns(code) {
     if (!code || S.settings.codeSearchBtns === false) return '';
     return CODE_SITES.map(function (cs) {
@@ -247,6 +347,21 @@
         'title="在 ' + cs.n + ' 搜索 ' + escapeHtml(code) + '">' + cs.n + '</a>';
     }).join('');
   }
+  /* 镜像站点归一：javdb.com / javdb571.com / javdb580.com 是同一个站的三个域名。
+     发现库按「来源组」记而不是按域名记 —— 否则同一个演员在三个镜像上逛一圈，
+     会被当成三个来源，出现次数 n 也会三倍膨胀，进而影响规则体检的「命中面」估算
+     和候选规则的覆盖率计算。n 本身的含义（出现次数）不变，只是多了按组拆分的账。 */
+  var MIRROR_GROUPS = (function () {
+    var m = {};
+    SITE_TEMPLATES.forEach(function (t) { if (t.mirror) m[t.mirror] = (m[t.mirror] || 0) + 1; });
+    return m;
+  })();
+  function mirrorGroupOf(host) {
+    var t = templateForHost(host);
+    return (t && t.mirror) ? t.mirror : String(host || '').toLowerCase();
+  }
+  function sourceGroup() { return mirrorGroupOf(location.hostname); }
+
   var currentSite = null;
   var probeMode = false;             // true = 当前页不是监管站点，仅启用链接探测
   var stats = { cards: 0, blocked: 0, fav: 0, hl: 0, dl: 0, soft: 0, preview: 0 };
@@ -289,6 +404,10 @@
       if (!st || !st.enabled || !st.pattern) continue;
       try {
         if (globToRegex(st.pattern).test(href)) return st;
+        // `*://*.example.com/*` 按匹配规则只认子域，裸域 example.com 会被漏掉。
+        // 站点实际常在裸域上（如 https://xsijishe.net/），这里补一次裸域匹配。
+        if (/^\*:\/\/\*\./.test(st.pattern) &&
+          globToRegex(st.pattern.replace('*://*.', '*://')).test(href)) return st;
       } catch (e) { /* 忽略非法 pattern */ }
     }
     return null;
@@ -390,6 +509,18 @@
         x.profiles = x.profiles || [];
         x.activeProfile = x.activeProfile || '';
         x.expiredLog = x.expiredLog || [];
+      },
+      // v4 → v5：站点模板化。老用户已存过 sites，这里按 id 把缺的默认站点补齐。
+      //           幂等：已存在的 id 不重复加。注意边界 —— 用户此前手动删掉过的默认站点
+      //           会在这次迁移里被补回来（一次性行为，之后不再触发）。
+      5: function (x) {
+        x.sites = x.sites || [];
+        var have = {};
+        x.sites.forEach(function (s) { if (s && s.id) have[s.id] = 1; });
+        DEFAULT_SITES.forEach(function (s) {
+          if (have[s.id]) return;
+          x.sites.push({ id: s.id, pattern: s.pattern, enabled: true, selector: '', note: s.note });
+        });
       }
     };
     for (var v = from + 1; v <= SCHEMA_VERSION; v++) {
@@ -741,10 +872,55 @@
     return dedupe(cards);
   }
 
+  // 列表行（论坛 / 表格）可见性：行高远小于卡片，不能用 visible() 的 60px 门槛
+  function visibleRow(el) {
+    var r = el.getBoundingClientRect();
+    return r.width > 120 && r.height > 14;
+  }
+
+  // 列表行模式兜底：论坛标题行通常没有图片，detectGeneric 的「必须含 img」会全军覆没
+  function detectRows() {
+    var sels = ['#threadlist tbody tr', '#threadlist tr', 'tbody tr', '.nex_forum_lists li', 'ul li'];
+    for (var i = 0; i < sels.length; i++) {
+      try {
+        var raw = document.querySelectorAll(sels[i]);
+        var els = [];
+        for (var j = 0; j < raw.length; j++) {
+          var el = raw[j];
+          if (!visibleRow(el)) continue;
+          var a = el.querySelector('a[href]');
+          if (!a || txt(a).length < 2) continue;
+          els.push(el);
+        }
+        if (els.length >= 3) { log('rows via selector', sels[i], els.length); return els.slice(0, 200); }
+      } catch (e) { /* 选择器非法则跳过 */ }
+    }
+    return [];
+  }
+
   function findCards() {
     var host = location.hostname || '';
+    var tpl = templateForHost(host);
+    var rowMode = !!(tpl && tpl.rowMode);
+    var vis = rowMode ? visibleRow : visible;
+
+    // 用户在「监管站点」里手填的卡片选择器优先
+    if (currentSite && currentSite.selector) {
+      try {
+        var ce = Array.prototype.filter.call(document.querySelectorAll(currentSite.selector), vis);
+        if (ce.length >= 3) {
+          var cd = dedupe(ce);
+          if (cd.length >= 3) { log('cards via custom selector', currentSite.selector, cd.length); return cd; }
+        }
+      } catch (e) { /* 选择器非法则跳过 */ }
+    }
+
+    if (rowMode) {
+      var rows = detectRows();
+      if (rows.length >= 3) return rows;
+    }
+
     var sels = [];
-    if (currentSite && currentSite.selector) sels.push(currentSite.selector);
     for (var i = 0; i < KNOWN_SELECTORS.length; i++) {
       if (KNOWN_SELECTORS[i].test.test(host)) sels = sels.concat(KNOWN_SELECTORS[i].sel);
     }
@@ -752,7 +928,7 @@
 
     for (var k = 0; k < sels.length; k++) {
       try {
-        var els = Array.prototype.filter.call(document.querySelectorAll(sels[k]), visible);
+        var els = Array.prototype.filter.call(document.querySelectorAll(sels[k]), vis);
         if (els.length >= 3) {
           var d = dedupe(els);
           if (d.length >= 3) { log('cards via selector', sels[k], d.length); return d; }
@@ -770,8 +946,9 @@
   function classify(el) {
     var href = (el.getAttribute && el.getAttribute('href')) || '';
     var cls = typeof el.className === 'string' ? el.className : '';
-    for (var i = 0; i < LINK_KINDS.length; i++) {
-      var k = LINK_KINDS[i];
+    var kinds = linkKindsFor(location.hostname);
+    for (var i = 0; i < kinds.length; i++) {
+      var k = kinds[i];
       if (k.href.test(href) || k.cls.test(cls)) return k.kind;
     }
     return null;
@@ -779,6 +956,7 @@
 
   function extract(card) {
     var full = txt(card);
+    var kinds = linkKindsFor(location.hostname);
     var links = card.querySelectorAll('a[href]');
     var bucket = { actress: new Set(), tag: new Set(), maker: new Set(), series: new Set(), director: new Set(), actressItems: [] };
 
@@ -800,18 +978,31 @@
       if (typeof c !== 'string' || !c) continue;
       var t2 = txt(el);
       if (!t2 || t2.length > 40) continue;
-      for (var q = 0; q < LINK_KINDS.length; q++) {
-        if (LINK_KINDS[q].cls.test(c)) { bucket[LINK_KINDS[q].kind].add(t2); break; }
+      for (var q = 0; q < kinds.length; q++) {
+        if (kinds[q].cls.test(c)) { bucket[kinds[q].kind].add(t2); break; }
       }
     }
 
     var img = card.querySelector('img');
     var titleEl = card.querySelector('.title, h1, h2, h3, h4, [class*="title" i]');
     var title = txt(titleEl) || (img && img.getAttribute('alt')) || '';
+    // 标题兜底：论坛行 / 没有 .title 元素的卡片，取行内最长的锚文本当标题
+    if (!title) {
+      var as2 = card.querySelectorAll('a[href]'), bestT = '', bestL = 0;
+      for (var z = 0; z < as2.length; z++) {
+        var tt = txt(as2[z]);
+        if (tt.length > bestL) { bestL = tt.length; bestT = tt; }
+      }
+      if (bestT) title = bestT;
+    }
     var code = '';
+    var tpl = templateForHost(location.hostname);
     var firstA = card.querySelector('a[href]');
-    if (firstA) code = codeFromHref(firstA.getAttribute('href'));
+    // 非番号体系的站点，从链接路径猜番号只会得到 thread-12345 这类垃圾，
+    // 所以这类站只从标题里猜（论坛标题里往往直接写着番号）。
+    if (firstA && (!tpl || tpl.code !== false)) code = codeFromHref(firstA.getAttribute('href'));
     if (!code && title) code = codeFromHref(title);
+    var cid = code || contentIdFromHref(firstA ? firstA.getAttribute('href') : '', tpl);
 
     function joined(set) { return Array.from(set).join(' | ').toLowerCase(); }
 
@@ -824,6 +1015,7 @@
       director: joined(bucket.director),
       title: (title + ' ' + code).toLowerCase(),
       code: code,
+      cid: cid,
       rawTitle: title,
       actressList: Array.from(bucket.actress),
       actressItems: bucket.actressItems || [],
@@ -834,6 +1026,18 @@
       rating: extractRating(card, full),
       date: extractDate(card, full)
     };
+  }
+
+  /* ---------------- 跨站内容身份（cid）----------------
+     番号站：cid 就是番号本身，老数据（已看 / 收藏 / 待看都按番号存）不用迁移。
+     非番号站：番号为空，就从链接里抽站点自己的稳定 ID，加前缀避免跨站撞号
+       —— PornHub 的 viewkey → ph:xxxx，YouPorn 的 /watch/123 → yp:123，Discuz 的 thread-123 → dz:123。
+     有了它，收藏 / 待看 / 已看 / 临时放行在这些站上才可用。 */
+  function contentIdFromHref(href, tpl) {
+    if (!href || !tpl || !tpl.idFrom) return '';
+    var m = String(href).match(tpl.idFrom);
+    if (!m || !m[1]) return '';
+    return (tpl.idPrefix || tpl.id) + ':' + m[1].toLowerCase();
   }
 
   // 评分提取（尽力而为）：优先取 class 含 rate/score/star 的元素里的数字，其次匹配「评分 N.N」
@@ -1148,9 +1352,9 @@
       if (blocked) {
         reasons.push({ a: 'block', v: blockRule.value, t: blockRule.type, s: blockRule.scope || 'all' });
         // 临时放行：点过「仍然查看」的番号在有效期内不再屏蔽
-        var peeked = !!(ctx.code && S.peeks && S.peeks[ctx.code] && (Date.now() - S.peeks[ctx.code] < peekTtl()));
+        var peeked = !!(ctx.cid && S.peeks && S.peeks[ctx.cid] && (Date.now() - S.peeks[ctx.cid] < peekTtl()));
         if (peeked) {
-          reasons.push({ a: 'peek', v: ctx.code, t: 'code', s: 'title' });
+          reasons.push({ a: 'peek', v: ctx.cid, t: 'code', s: 'title' });
           card.classList.add('cf-peek');   // 手动放行的卡片：淡绿虚线描边，便于识别
         } else if (st.previewMode) {
           // 规则预览：不真正隐藏，只描边提示「这里会被屏蔽」，便于确认有没有误杀
@@ -1163,7 +1367,7 @@
           // 软屏蔽：灰化 + 模糊遮罩，卡片上浮出「仍然查看」按钮
           card.classList.add('cf-soft', 'cf-card');
           try { card.dataset.cfCode = ctx.code || ''; card.dataset.cfA = ctx.actressList.join(' || '); } catch (e) { }
-          ensurePeekBtn(card, ctx.code);
+          ensurePeekBtn(card, ctx.cid);
           whyMap.set(card, reasons);
           stats.blocked++; stats.soft++;
           return;
@@ -1210,27 +1414,28 @@
 
       if (st.sfw) card.classList.add('cf-sfw');
 
-      if (st.markSeen && ctx.code && S.seen[ctx.code]) card.classList.add('cf-seen');
+      // 已看 / 收藏 / 待看一律按 cid 记（番号站 cid 就是番号，非番号站是站点 ID）
+      if (st.markSeen && ctx.cid && S.seen[ctx.cid]) card.classList.add('cf-seen');
 
-      var favCode = !!(ctx.code && S.favCodes[ctx.code]);
+      var favCode = !!(ctx.cid && S.favCodes[ctx.cid]);
       if (favCode) { card.classList.add('cf-favcode'); stats.fav++; }
 
       // 卡片 hover 的 ♥ 番号收藏按钮
       var fa = card.querySelector('a[href]');
       card.classList.add('cf-card');
       try { card.dataset.cfA = ctx.actressList.join(' || '); } catch (e) { }
-      ensureFavBtn(card, ctx.code, ctx.rawTitle, fa ? fa.getAttribute('href') : '');
-      ensureWatchBtn(card, ctx.code, ctx.rawTitle, fa ? fa.getAttribute('href') : '');
+      ensureFavBtn(card, ctx.cid, ctx.rawTitle, fa ? fa.getAttribute('href') : '');
+      ensureWatchBtn(card, ctx.cid, ctx.rawTitle, fa ? fa.getAttribute('href') : '');
 
       var hideByFav = false;
       if (st.onlyFav && !isFav && !favCode) hideByFav = true;
       if (st.onlyFavCode && !favCode) hideByFav = true;
       if (hideByFav) { card.classList.add('cf-blocked'); stats.blocked++; reasons.push({ a: 'filter', v: st.onlyFavCode ? '只看★番号' : '只看收藏', t: 'filter', s: 'all' }); }
 
-      if (favCode) reasons.push({ a: 'favcode', v: ctx.code, t: 'code', s: 'title' });
-      if (ctx.code && S.watchlist && S.watchlist[ctx.code]) {
+      if (favCode) reasons.push({ a: 'favcode', v: ctx.cid, t: 'code', s: 'title' });
+      if (ctx.cid && S.watchlist && S.watchlist[ctx.cid]) {
         card.classList.add('cf-watch');
-        reasons.push({ a: 'watch', v: ctx.code, t: 'code', s: 'title' });
+        reasons.push({ a: 'watch', v: ctx.cid, t: 'code', s: 'title' });
       }
       whyMap.set(card, reasons);
     });
@@ -1258,10 +1463,22 @@
   /* ---------------- 悬浮球 + 面板（Shadow DOM 隔离） ---------------- */
   var UI_CSS = [
     '.cf-host{position:fixed;z-index:2147483000;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;font-size:13px;color:#e6e8ee;}',
-    '.cf-ball{position:fixed;width:46px;height:46px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;',
-    'background:linear-gradient(135deg,#2b2f45,#151824);border:1px solid rgba(255,255,255,.16);',
-    'box-shadow:0 6px 20px rgba(0,0,0,.45);user-select:none;font-size:19px;color:#8bd5ff;transition:transform .15s;}',
-    '.cf-ball:hover{transform:scale(1.08);color:#00e5ff;}',
+    /* 悬浮球：径向渐变 + 内高光 + 外圈光晕；主色跟随高亮色（--hl） */
+    '.cf-ball{position:fixed;width:48px;height:48px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;',
+    'background:radial-gradient(circle at 32% 26%,#39415f 0%,#242a3d 52%,#141822 100%);',
+    'border:1px solid rgba(255,255,255,.15);user-select:none;font-size:20px;line-height:1;color:var(--hl,#8bd5ff);',
+    'box-shadow:0 8px 22px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.14),inset 0 -6px 12px rgba(0,0,0,.35);',
+    'transition:transform .16s cubic-bezier(.2,.8,.3,1),box-shadow .18s,color .18s,filter .18s;}',
+    '.cf-ball:hover{transform:scale(1.09);color:#eafcff;',
+    'box-shadow:0 12px 28px rgba(0,0,0,.55),0 0 0 5px rgba(0,229,255,.10),inset 0 1px 0 rgba(255,255,255,.2);}',
+    '.cf-ball:active{transform:scale(.95);}',
+    '.cf-ball.dragging{transform:scale(1.13);cursor:grabbing;',
+    'box-shadow:0 16px 34px rgba(0,0,0,.6),0 0 0 7px rgba(0,229,255,.14);}',
+    /* 锁定位置：右下角挂一枚小锁，光标改成"点得动但拖不动"的抓手 */
+    '.cf-ball.locked{cursor:pointer;}',
+    '.cf-ball.locked::after{content:"🔒";position:absolute;right:-3px;bottom:-3px;width:17px;height:17px;border-radius:50%;',
+    'background:#151824;border:1px solid rgba(255,255,255,.2);font-size:9px;line-height:16px;text-align:center;',
+    'box-shadow:0 2px 6px rgba(0,0,0,.5);}',
     '.cf-ball.off{opacity:.4;}',
     '.cf-ball.hot{color:#ffc93c;border-color:rgba(255,201,60,.6);}',
     '.cf-panel{position:fixed;width:322px;max-height:74vh;display:none;flex-direction:column;overflow:hidden;',
@@ -1329,6 +1546,19 @@
     'background:rgba(255,255,255,.04);color:#aab2c6;cursor:pointer;font-size:11px;}',
     '.cf-foot button:hover{background:rgba(255,255,255,.12);color:#fff;}',
     '.cf-tip{padding:6px 12px;font-size:11px;color:#6f7893;border-top:1px solid rgba(255,255,255,.07);}',
+    /* ---------- 按钮统一手感：按下回弹 + 过渡 + 键盘聚焦环 ----------
+       放在各按钮基础样式之后，同权重靠顺序覆盖，不去改上面已经调好的配色 */
+    '.cf-hd button{width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:8px;',
+    'transition:background .15s,color .15s,transform .12s;}',
+    '.cf-hd button:active{transform:scale(.88);}',
+    '.cf-hd button.on{background:rgba(255,201,60,.16);color:#ffc93c;}',
+    '.cf-tg label,.cf-tabs button,.cf-mini,.cf-quick .r2 button,.cf-foot button,.cf-filter button,.cf-dlbar button{',
+    'transition:background .15s,border-color .15s,color .15s,transform .12s;}',
+    '.cf-tg label:active,.cf-tabs button:active,.cf-mini:active,',
+    '.cf-quick .r2 button:active,.cf-foot button:active,.cf-filter button:active{transform:scale(.94);}',
+    '.cf-hd button:focus-visible,.cf-tabs button:focus-visible,.cf-mini:focus-visible,',
+    '.cf-quick .r2 button:focus-visible,.cf-foot button:focus-visible,.cf-filter button:focus-visible{',
+    'outline:2px solid rgba(0,229,255,.75);outline-offset:1px;}',
     /* 推荐卡片墙 */
     '.cf-wall{display:grid;grid-template-columns:1fr 1fr;gap:7px;}',
     '.cf-vcard{position:relative;border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:9px 9px 8px;cursor:pointer;',
@@ -1489,6 +1719,7 @@
       '<div class="cf-panel" id="panel">',
       '  <div class="cf-hd"><span class="t">SiteFilter</span><span class="sp"></span>',
       '    <button data-act="opt" title="完整设置">⚙</button>',
+      '    <button data-act="lock" id="lockBtn" title="锁定 / 解锁悬浮球位置">🔓</button>',
       '    <button data-act="close" title="关闭">✕</button></div>',
       '  <div class="cf-tg">',
       '    <label data-tg="enabled"><input type="checkbox" data-cb="enabled">过滤</label>',
@@ -1533,7 +1764,7 @@
       '    <button data-act="importColl" id="importColl" class="cf-imp">📥导入本页收藏</button>',
       '    <button data-act="opt">完整设置</button>',
       '  </div>',
-      '  <div class="cf-tip">Alt+F 开合面板 · Alt+S 模糊 · Alt+B 老板键</div>',
+      '  <div class="cf-tip">Alt+F 开合面板 · Alt+S 模糊 · Alt+B 老板键 · <span data-act="lock" id="tipLock" style="cursor:pointer">Alt+L 锁定球</span></div>',
       '</div>'
     ].join('');
 
@@ -1552,6 +1783,7 @@
     var flRating = sr.getElementById('flRating');
     var flDate = sr.getElementById('flDate');
     var importBtn = sr.getElementById('importColl');
+    var lockBtn = sr.getElementById('lockBtn');
     var searchEl = sr.getElementById('search');
     var warnEl = sr.getElementById('warn');
     var pickEl = sr.getElementById('pick');
@@ -1574,7 +1806,7 @@
       dots.appendChild(d);
     });
 
-    ui = { host: host, sr: sr, ball: ball, panel: panel, list: list, stats: statsEl, qin: qin, qtype: qtype, dots: dots, tabs: tabsEl, tabDefs: TABS, flRating: flRating, flDate: flDate, importBtn: importBtn, search: searchEl, warn: warnEl, pick: pickEl };
+    ui = { host: host, sr: sr, ball: ball, panel: panel, list: list, stats: statsEl, qin: qin, qtype: qtype, dots: dots, tabs: tabsEl, tabDefs: TABS, flRating: flRating, flDate: flDate, importBtn: importBtn, lockBtn: lockBtn, search: searchEl, warn: warnEl, pick: pickEl };
 
     flRating.addEventListener('change', applyFilter);
     flDate.addEventListener('change', applyFilter);
@@ -1680,37 +1912,83 @@
     });
     qin.addEventListener('keyup', function (e) { e.stopPropagation(); });
 
-    /* 拖动 */
+    /* 拖动（锁定位置时整个拖动链路不启动，但仍然能点击开合面板） */
     var dragging = false, moved = false, sx = 0, sy = 0, ox = 0, oy = 0;
     ball.addEventListener('mousedown', function (e) {
+      if (S.settings.ballLock) return;
       dragging = true; moved = false;
       sx = e.clientX; sy = e.clientY;
       ox = S.settings.ball.right; oy = S.settings.ball.bottom;
+      ball.classList.add('dragging');
       e.preventDefault();
     });
     window.addEventListener('mousemove', function (e) {
       if (!dragging) return;
       var dx = sx - e.clientX, dy = sy - e.clientY;
       if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
-      S.settings.ball.right = Math.max(0, Math.min(window.innerWidth - 60, ox + dx));
-      S.settings.ball.bottom = Math.max(0, Math.min(window.innerHeight - 60, oy + dy));
+      S.settings.ball.right = clampBall(ox + dx, window.innerWidth);
+      S.settings.ball.bottom = clampBall(oy + dy, window.innerHeight);
       applyPos();
     });
     window.addEventListener('mouseup', function (e) {
       if (dragging) {
         dragging = false;
+        ball.classList.remove('dragging');
         if (moved) { ball.dataset.moved = '1'; saveSettings(); }
       }
     });
-
     applyPos();
     syncToggles();
+    syncLockBtn();
     syncDots();
+  }
+
+  /* ---------------- 悬浮球位置：锁定 / 解锁 ---------------- */
+  function ballLocked() { return !!S.settings.ballLock; }
+
+  function toggleBallLock(force) {
+    S.settings.ballLock = force != null ? !!force : !ballLocked();
+    saveSettings();
+    syncLockBtn();
+    flashBall(ballLocked() ? '🔒' : '🔓', 900);
+  }
+
+  // 悬浮球锁定状态 → 按钮图标 / 提示 / 球体角标 / 底部提示文案
+  function syncLockBtn() {
+    if (!ui) return;
+    var on = ballLocked();
+    ui.ball.classList.toggle('locked', on);
+    if (ui.lockBtn) {
+      ui.lockBtn.textContent = on ? '🔒' : '🔓';
+      ui.lockBtn.classList.toggle('on', on);
+      ui.lockBtn.title = on ? '悬浮球位置已锁定（点此解锁，可重新拖动）' : '锁定悬浮球位置（锁定后拖不动）';
+    }
+    var tip = ui.sr && ui.sr.getElementById('tipLock');
+    if (tip) tip.textContent = on ? 'Alt+L 解锁球' : 'Alt+L 锁定球';
+    ui.ball.title = probeMode ? ui.ball.title
+      : ('SiteFilter（Alt+F 开合' + (on ? '，位置已锁定' : '，可拖动') + '）');
+  }
+
+  // 悬浮球尺寸：48px，再留 12px 边距，保证缩小窗口后不会半个球飘到屏幕外
+  var BALL_SIZE = 48, BALL_MARGIN = 12;
+  function clampBall(v, viewport) {
+    var max = Math.max(0, viewport - BALL_SIZE - BALL_MARGIN);
+    return Math.max(0, Math.min(max, Number(v) || 0));
+  }
+  // 当前应显示的球位置（含越界收敛；不写回设置，避免 resize 时静默改掉用户存的位置）
+  function ballBox() {
+    var b = S.settings.ball || DEFAULT_SETTINGS.ball;
+    return {
+      right: clampBall(b.right, window.innerWidth),
+      bottom: clampBall(b.bottom, window.innerHeight)
+    };
   }
 
   function applyPos() {
     if (!ui) return;
-    var b = S.settings.ball || DEFAULT_SETTINGS.ball;
+    var b = ballBox();
+    // 主色跟随「高亮色」设置，让球和卡片高亮描边是一套颜色
+    ui.host.style.setProperty('--hl', S.settings.hlColor || DEFAULT_SETTINGS.hlColor);
     ui.ball.style.right = b.right + 'px';
     ui.ball.style.bottom = b.bottom + 'px';
     // 面板跟随悬浮球，贴右下角
@@ -2621,11 +2899,16 @@
     return /^[A-Z0-9]{2,10}-[0-9]{2,6}$/.test(c) ? c : '';
   }
 
+  // 详情页的内容 ID：番号站还是番号，非番号站回落到站点自己的 ID（ph:xxx / yp:123 / dz:123）
+  function detailContentId() {
+    return detailCodeFromUrl() || contentIdFromHref(location.href, templateForHost(location.hostname));
+  }
+
   function maybeAutoSeen() {
     try {
       if (!S.settings.autoSeen) return;
       if (!currentSite) return;
-      var c = detailCodeFromUrl();
+      var c = detailContentId();
       if (!c || S.seen[c]) return;
       S.seen[c] = Date.now();
       saveState({ seen: S.seen });
@@ -2693,6 +2976,7 @@
   function handleAct(act) {
     if (act === 'close') { togglePanel(false); return; }
     if (act === 'opt') { try { chrome.runtime.sendMessage({ type: 'sf_open_options' }); } catch (e) { } return; }
+    if (act === 'lock') { toggleBallLock(); return; }
     if (act === 'onboardClose') { S.settings.onboarded = true; saveSettings(); renderOnboard(); return; }
     if (act === 'flClear') {
       if (ui.flRating) ui.flRating.value = '';
@@ -3149,7 +3433,7 @@
     var cur = discDelta.get(key);
     if (cur) { cur.n++; if (extra) Object.assign(cur, extra); }
     else {
-      var e = { v: name, type: type, n: 1 };
+      var e = { v: name, type: type, n: 1, grp: sourceGroup() };
       if (extra) Object.assign(e, extra);
       discDelta.set(key, e);
     }
@@ -3165,7 +3449,7 @@
       var key = 'actress|' + nm;
       var e = S.discovered[key];
       if (!e) {
-        e = S.discovered[key] = { v: nm, type: 'actress', n: 0, first: now, last: now, site: location.hostname, seen: 0 };
+        e = S.discovered[key] = { v: nm, type: 'actress', n: 0, first: now, last: now, site: sourceGroup(), seen: 0 };
       }
       e.seen = (e.seen || 0) + 1;
       e.last = now;
@@ -3192,16 +3476,23 @@
       var disc = d.discovered || {};
       var now = Date.now();
       delta.forEach(function (x, key) {
+        var grp = x.grp || sourceGroup();
         var e = disc[key];
         if (e) {
           e.n += x.n; e.last = now;
+          // 按「来源组」拆账：三个 JavDB 镜像都记到 javdb 这一格里，site 也用组名，
+          // 否则同一个人在镜像站逛一圈会被当成三个来源、出现次数三倍膨胀
+          e.site = grp;
+          e.sites = e.sites || {};
+          e.sites[grp] = (e.sites[grp] || 0) + x.n;
           if (x.href) e.href = x.href;
           if (x.avatar) e.avatar = x.avatar;
           if (x.rating) e.rating = x.rating;
           if (x.works) e.works = x.works;
         } else {
+          var sg = {}; sg[grp] = x.n;
           disc[key] = {
-            v: x.v, type: x.type, n: x.n, first: now, last: now, site: location.hostname,
+            v: x.v, type: x.type, n: x.n, first: now, last: now, site: grp, sites: sg,
             href: x.href || '', avatar: x.avatar || '', rating: x.rating || 0, works: x.works || 0
           };
         }
@@ -3397,7 +3688,7 @@
   }
 
   /* ---------------- 快捷键（键位可在设置页「快捷键」卡片里自定义） ----------------
-   * 全局键：Alt + 单键（面板 / SFW / 老板键）
+   * 全局键：Alt + 单键（面板 / SFW / 老板键 / 锁球）
    * 面板内键：面板打开时生效，单键操作当前选中的卡片
    * Esc 固定不可改（否则用户可能把自己锁在面板里出不来） */
   function keys() {
@@ -3409,6 +3700,7 @@
         if (k === keyOf('panel')) { e.preventDefault(); togglePanel(); }
         else if (k === keyOf('sfw')) { e.preventDefault(); S.settings.sfw = !S.settings.sfw; saveSettings(); syncToggles(); schedulePass(); }
         else if (k === keyOf('boss')) { e.preventDefault(); S.settings.boss = !S.settings.boss; saveSettings(); syncToggles(); updateHostVisibility(); schedulePass(); }
+        else if (k === keyOf('lock')) { e.preventDefault(); toggleBallLock(); }
       }
 
       // Esc：关闭面板（固定键）
@@ -3594,7 +3886,7 @@
         S.similarRecs = d.similarRecs || S.similarRecs;
         invalidateExtract();
         currentSite = matchSite(location.href);
-        syncToggles(); syncDots(); applyPos(); updateHostVisibility();
+        syncToggles(); syncDots(); syncLockBtn(); applyPos(); updateHostVisibility();
         schedulePass();
       });
 

@@ -1,6 +1,6 @@
 'use strict';
 var DATA_KEY = 'sf_data_v1';
-var SCHEMA_VERSION = 4;   // 与 content.js / background.js 保持一致
+var SCHEMA_VERSION = 5;   // 与 content.js / background.js 保持一致
 
 /* ---------------- 错误日志（与 content/background 共用同一份 errLog） ---------------- */
 var ERR_MAX = 200;
@@ -23,6 +23,7 @@ var DEFAULT_SETTINGS = {
   watchBtn: true, showWhy: true, softBlock: false, autoBackup: false,
   probeLinks: true, probeMark: true, probeAnySite: true,
   hlColor: '#00e5ff', ball: { right: 24, bottom: 24 },
+  ballLock: false,     // 锁定悬浮球位置（锁定后拖不动）
   onboarded: false, lastRecDay: '',
   previewMode: false, peekHours: 24,
   firstMatchWins: false, codeSearchBtns: true,
@@ -33,6 +34,7 @@ var DEFAULT_SETTINGS = {
 var SWITCHES = [
   ['enabled', '启用过滤'], ['sfw', 'SFW 缩略图模糊'], ['onlyFav', '只看收藏（女优/标签等）'],
   ['onlyFavCode', '只看★番号收藏'], ['boss', '老板键'], ['showBall', '显示悬浮球'],
+  ['ballLock', '锁定悬浮球位置（锁定后拖不动，点击仍可开合面板）'],
   ['pinHighlight', '高亮卡片置顶'], ['markSeen', '标记已看'], ['favBtn', '卡片 ♥ 收藏按钮'],
   ['watchBtn', '卡片 ⏳ 待看按钮'], ['showWhy', '悬停显示「为什么被处理」浮层'],
   ['softBlock', '软屏蔽（灰化模糊 + 「仍然查看」临时放行）'],
@@ -49,6 +51,20 @@ var SCOPE_OF = {
   director: 'director', keyword: 'title', code: 'title'
 };
 var MATCH_LABEL = { contains: '包含', exact: '精确', regex: '正则' };
+
+/* 默认监管站点：content.js 的 SITE_TEMPLATES 是唯一事实来源，这里是同一份数据的副本
+   （设置页是独立页面，拿不到 content script 的全局变量）。
+   由 _test_sites.js 断言两边 id / pattern / note 必须一致 —— 别只改一处。 */
+var DEFAULT_SITES_OPTIONS = [
+  { id: 's_javbus', pattern: '*://*.javbus.com/*', enabled: true, selector: '', note: 'JavBus' },
+  { id: 's_xchina', pattern: '*://*.xchina.co/*', enabled: true, selector: '', note: 'xchina' },
+  { id: 's_javdb571', pattern: '*://*.javdb571.com/*', enabled: true, selector: '', note: 'JavDB 镜像' },
+  { id: 's_javdb', pattern: '*://*.javdb.com/*', enabled: true, selector: '', note: 'JavDB' },
+  { id: 's_javdb580', pattern: '*://*.javdb580.com/*', enabled: true, selector: '', note: 'JavDB 镜像580' },
+  { id: 's_pornhub', pattern: '*://*.pornhub.com/*', enabled: true, selector: '', note: 'PornHub' },
+  { id: 's_youporn', pattern: '*://*.youporn.com/*', enabled: true, selector: '', note: 'YouPorn' },
+  { id: 's_xsijishe', pattern: '*://*.xsijishe.net/*', enabled: true, selector: '', note: 'xsijishe（求出处）' }
+];
 
 var D = {
   schemaVersion: SCHEMA_VERSION,
@@ -102,6 +118,16 @@ function migrate(d) {
       x.profiles = x.profiles || [];
       x.activeProfile = x.activeProfile || '';
       x.expiredLog = x.expiredLog || [];
+    },
+    // v4 → v5：站点模板化。按 id 把缺的默认站点补齐（与 content.js / background.js 同一份逻辑）
+    5: function (x) {
+      x.sites = x.sites || [];
+      var have = {};
+      x.sites.forEach(function (s) { if (s && s.id) have[s.id] = 1; });
+      DEFAULT_SITES_OPTIONS.forEach(function (s) {
+        if (have[s.id]) return;
+        x.sites.push({ id: s.id, pattern: s.pattern, enabled: true, selector: '', note: s.note });
+      });
     }
   };
   for (var v = from + 1; v <= SCHEMA_VERSION; v++) {
@@ -1681,10 +1707,15 @@ if (_packSel) {
 })();
 
 /* ---------------- 卡片选择器预置模板 ---------------- */
+/* content.js 的 SITE_TEMPLATES 是唯一事实来源，这里是同一份数据的副本。
+   由 _test_sites.js 断言两边一致 —— 别只改一处。 */
 var TPL_SELECTORS = [
   { name: 'JavBus', test: 'javbus', sel: '.item' },
-  { name: 'JavDB / 镜像', test: 'javdb', sel: '.item' },
   { name: 'xchina', test: 'xchina', sel: '.item' },
+  { name: 'JavDB', test: 'javdb', sel: '.item' },
+  { name: 'PornHub', test: 'pornhub', sel: 'li.pcVideoListItem' },
+  { name: 'YouPorn', test: 'youporn', sel: 'li.videoBox' },
+  { name: 'xsijishe（求出处）', test: 'xsijishe', sel: '#threadlist tbody tr' },
   { name: 'AVMOO / AVSOX', test: 'avmoo', sel: '.item' },
   { name: '色花堂 / 高清', test: 'sehuatang', sel: '.card' },
   { name: 'JavLibrary', test: 'javlibrary', sel: '.item' }
@@ -1802,7 +1833,7 @@ document.getElementById('undoBtn').addEventListener('click', doUndo);
  * —— 测试里有守卫断言两边的默认表与特殊键表完全相同，避免各写各的。
  * ===================================================================== */
 var DEFAULT_KEYS = {
-  panel: 'f', sfw: 's', boss: 'b',
+  panel: 'f', sfw: 's', boss: 'b', lock: 'l',
   prev: 'k', next: 'j', block: 'b', fav: 'f', hl: 'h', watch: 'p', open: 'enter'
 };
 var KEY_SPECIAL = ['enter', 'space', 'escape', 'tab', 'backspace', 'delete',
@@ -1812,7 +1843,8 @@ var KEY_GROUPS = [
     name: '全局键', hint: '同时按住 Alt 才生效，不会影响页面本身的操作', items: [
       ['panel', '展开 / 收起悬浮面板'],
       ['sfw', 'SFW 缩略图模糊'],
-      ['boss', '老板键（恢复页面原样并隐藏面板）']
+      ['boss', '老板键（恢复页面原样并隐藏面板）'],
+      ['lock', '锁定 / 解锁悬浮球位置']
     ]
   },
   {
