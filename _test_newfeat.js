@@ -53,7 +53,7 @@ function build(opts) {
     settings: Object.assign({
       enabled: true, sfw: false, onlyFav: false, onlyFavCode: false, boss: false,
       showBall: true, pinHighlight: true, markSeen: true, favBtn: true,
-      watchBtn: true, showWhy: true, softBlock: false,
+      watchBtn: true, showWhy: true, blockDisplay: 'hide',
       hlColor: '#00e5ff', ball: { right: 24, bottom: 24 }, onboarded: true,
       autoSeen: true, auditWarn: true, keys: {}
     }, opts.settings || {}),

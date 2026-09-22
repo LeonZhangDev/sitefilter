@@ -23,7 +23,11 @@
 - **加密备份**：口令保护（PBKDF2 25 万次 + AES-GCM 256），适合放网盘。
 
 > 数据 100% 存在本机（`chrome.storage.local`），**没有任何服务器、没有任何上传**。
-> 整个扩展不做任何自动网络请求（加密用的是浏览器内置 WebCrypto，不是调远端接口）。
+> 默认不做任何自动网络请求（加密用的是浏览器内置 WebCrypto，不是调远端接口）。
+>
+> ⚠️ **唯一的例外**：设置页「番号站数量补足」是**默认关闭**的。它开启后，扩展会在
+> JavDB580 上额外抓取列表页来填补被屏蔽卡片的空位（不带 Cookie、限速、最多 3 页）。
+> 除这个开关主动打开的情况外，扩展不会发起任何网络请求。
 
 ---
 
@@ -830,7 +834,7 @@ manifest 版本一致**，再出包并附到 GitHub Release 上。版本号请�
 
 ```bash
 npm install            # 装 jsdom
-python ci.py           # 一把跑完：语法检查 + 10 套测试 + 打包校验
+python ci.py           # 一把跑完：语法检查 + 17 套测试 + 打包校验
 
 # 或者单跑某一套
 node _test_daily.js      # 这几个不需要 jsdom
@@ -845,11 +849,17 @@ NODE_PATH=<...> node _test_options.js
 NODE_PATH=<...> node _test_softblock.js
 NODE_PATH=<...> node _test_writeback.js
 NODE_PATH=<...> node _test_newfeat.js
+NODE_PATH=<...> node _test_sites.js
+NODE_PATH=<...> node _test_shopprice.js
+NODE_PATH=<...> node _test_backfill.js
+NODE_PATH=<...> node _test_collector_native.js
+NODE_PATH=<...> node _test_xchina_download.js
 ```
 
-当前共 **609 项断言全部通过，0 失败**（12 套）：
-设置页 136 · 主冒烟 110 · 表达式引擎 83 · 数据迁移 80 · 新增功能 41 · 加密备份 30 ·
-每日推荐 27 · 相似推荐 25 · 写回完整性 24 · 软屏蔽 23 · 规则条件 20 · 导入 10。
+当前共 **940 项断言全部通过，0 失败**（17 套）：
+设置页 169 · 主冒烟 111 · 数据迁移 97 · 站点模板 86 · 表达式引擎 83 · 下番号下载 79 ·
+软屏蔽 45 · 新增功能 41 · 采集器桥 37 · 多站比价 34 · 加密备份 30 · 每日推荐 27 ·
+相似推荐 25 · 写回完整性 24 · 番号补足 22 · 规则条件 20 · 导入 10。
 
 测试套件由 `make_package.py` 自动发现（`_smoke.js` + 全部 `_test_*.js`），
 新增一套测试不用改打包脚本。

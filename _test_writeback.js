@@ -39,7 +39,10 @@ function seedData() {
     settings: {
       enabled: true, sfw: false, onlyFav: false, onlyFavCode: false, boss: false,
       showBall: true, pinHighlight: true, markSeen: true, favBtn: true, watchBtn: true,
-      showWhy: false, softBlock: false, previewMode: false, firstMatchWins: false,
+      showWhy: false, previewMode: false, firstMatchWins: false,
+      // v6：softBlock 由三档 blockDisplay 取代。这里显式写 'hide'（等价旧 softBlock:false），
+      // 不让测试隐性依赖 step 6 迁移 —— 迁移本身有 _test_softblock.js 阶段四专门覆盖。
+      blockDisplay: 'hide',
       codeSearchBtns: false, probeLinks: false, hlColor: '#00e5ff', keys: {},
       ball: { right: 24, bottom: 24 }, onboarded: true,
     },

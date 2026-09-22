@@ -52,7 +52,7 @@ function build(rules, settings, extra) {
     settings: Object.assign({
       enabled: true, sfw: false, onlyFav: false, onlyFavCode: false, boss: false,
       showBall: true, pinHighlight: true, markSeen: false, favBtn: false,
-      watchBtn: false, showWhy: false, softBlock: false, previewMode: false,
+      watchBtn: false, showWhy: false, blockDisplay: 'hide', previewMode: false,
       firstMatchWins: false, codeSearchBtns: true,
       hlColor: '#00e5ff', ball: { right: 24, bottom: 24 }, onboarded: true,
     }, settings || {}),

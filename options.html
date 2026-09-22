@@ -124,6 +124,24 @@
       <h2>规则体检 <small id="auditCount"></small></h2>
       <div id="auditBox"></div>
     </div>
+
+    <div class="card">
+      <h2>影响面预演 <small>在动规则之前先看清「会挡掉谁」—— 基于发现库与命中历史演算，不改动任何规则</small></h2>
+      <div class="grid" style="margin-bottom:8px">
+        <button class="primary" id="simRun">开始预演</button>
+        <label class="sw" style="cursor:default">
+          <select id="simScope" style="margin-right:6px">
+            <option value="all">全部规则</option>
+            <option value="block">只看屏蔽类</option>
+            <option value="enabled">只看启用中</option>
+          </select>
+          预演范围
+        </label>
+        <span style="flex:1"></span>
+        <span class="tip" style="margin:0">数据源：发现库（本机累计的女优/标签/片商…）</span>
+      </div>
+      <div id="simBox" class="tip" style="margin:0">点「开始预演」后，这里会列出每条规则在发现库里会命中多少条目、占总量的比例，以及命中重叠情况。</div>
+    </div>
   </div>
 
   <!-- ================= 分组 ================= -->
@@ -294,6 +312,44 @@
     </div>
 
     <div class="card">
+      <h2>屏蔽后显示方式 <small>命中屏蔽规则的卡片怎么处理；改完刷新页面生效</small></h2>
+      <div class="grid" id="bdRow">
+        <label class="sw" style="cursor:default">
+          <select id="bdSel" style="margin-right:8px">
+            <option value="hide">完全隐藏（列表自动重排）</option>
+            <option value="placeholder">保留占位（默认：位置和数量都不变，只是看不见）</option>
+            <option value="soft">灰化遮罩（模糊 + 「仍然查看」临时放行）</option>
+          </select>
+          屏蔽后显示方式
+        </label>
+      </div>
+      <div class="tip">「保留占位」会保住网格排布与分页器数量，适合按序号翻图时不想错位；「完全隐藏」页面更清爽但卡片会重排。</div>
+    </div>
+
+    <div class="card">
+      <h2>番号站数量补足 <small>被屏蔽的卡片留下的空位，去下一页抓真实卡片填上</small></h2>
+      <div class="grid" style="align-items:center">
+        <label class="sw" style="cursor:default">
+          <select id="bfSel" style="margin-right:8px">
+            <option value="off">关闭（默认，不联网）</option>
+            <option value="same">补齐到原始数量</option>
+            <option value="6">补到 6 张</option>
+            <option value="12">补到 12 张</option>
+            <option value="24">补到 24 张</option>
+          </select>
+          补足方式
+        </label>
+      </div>
+      <div class="tip" style="border-left:3px solid #ffc93c;padding-left:8px">
+        <b>这是本扩展唯一会发网络请求的功能。</b>只有你主动开启后才生效，且<b>仅对 JavDB580 生效</b> ——
+        2026-09-22 实测：JavDB 被 Cloudflare 挑战 + 地区版权封锁、JavBus 跳年龄验证、JavDB571 连不上，
+        只有 JavDB580 能返回正常列表页。补足只读取你正在浏览的站点的下一页公开列表页，
+        <b>不带登录态</b>（<code>credentials: omit</code>）、同站请求间隔 ≥1.2 秒、最多补 3 页。
+        补进来的卡片带浅色标记且不计入「发现库」与链接探测。
+      </div>
+    </div>
+
+    <div class="card">
       <h2>默认高亮颜色</h2>
       <div class="grid" id="hlDots"></div>
     </div>
@@ -386,9 +442,31 @@
       <h2>本地定时自动备份 <small>每天把一份 JSON 备份写进浏览器下载目录，纯本地、不连云</small></h2>
       <div class="grid" style="align-items:center">
         <label class="tg"><input type="checkbox" id="autoBackupOn" />启用每日自动备份到下载目录</label>
+        <label class="sw" style="cursor:default">
+          <select id="backupKeep" style="margin-right:6px">
+            <option value="1">每天 1 份</option>
+            <option value="7">保留 7 份</option>
+            <option value="30">保留 30 份</option>
+            <option value="0">不轮换（无限累积）</option>
+          </select>
+          快照轮换
+        </label>
         <button id="backupNow">立即备份一次</button>
       </div>
-      <div class="tip" id="backupTip" style="margin-top:8px">备份文件保存为「下载/sitefilter-backup/sitefilter-日期.json」，同名覆盖，不会越攒越多。</div>
+      <div class="tip" id="backupTip" style="margin-top:8px"></div>
+      <div class="tip">文件名带时分秒，所以同一天多次备份不会再互相覆盖（旧版是「同名覆盖」，一天只能留一份）。
+        「快照轮换」只影响自动备份在下载目录里留几份，不删你手动导出的文件。</div>
+    </div>
+
+    <div class="card">
+      <h2>分项回滚 <small>从一个备份文件里只挑一部分恢复 —— 不必为了找回规则而把整个库退回去</small></h2>
+      <div class="grid" style="margin-bottom:8px">
+        <button class="primary" id="partialPick">选择一个备份文件…</button>
+        <input type="file" id="partialFile" accept="application/json,.json" style="display:none" />
+        <span style="flex:1"></span>
+        <span class="tip" style="margin:0" id="partialName">未选择文件</span>
+      </div>
+      <div id="partialBox"></div>
     </div>
 
     <div class="card">

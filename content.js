@@ -10,7 +10,7 @@
   window.__SITEFILTER_LOADED__ = true;
 
   var DATA_KEY = 'sf_data_v1';
-  var SCHEMA_VERSION = 5;   // 数据结构版本：改结构时 +1，并在 migrate() 里补一步
+  var SCHEMA_VERSION = 6;   // 数据结构版本：改结构时 +1，并在 migrate() 里补一步
   var DEBUG = false;
   function log() { if (DEBUG) console.log.apply(console, ['[SF]'].concat([].slice.call(arguments))); }
 
@@ -69,14 +69,19 @@
     lastRecDay: '',         // 上次看过推荐页的日期（用于每日自动推荐）
     showWhy: true,          // 悬停卡片显示「为什么被处理」浮层
     watchBtn: true,         // 卡片 hover 显示 ⏳ 待看按钮
-    softBlock: false,       // 软屏蔽：灰化模糊 + 「仍然查看」临时放行（默认关闭＝完全隐藏）
+    softBlock: false,       // 已废弃：由 blockDisplay 取代（保留仅为兼容旧数据，migrate 会读一次）
+    blockDisplay: 'placeholder', // 屏蔽后显示方式：'hide' 完全隐藏 / 'placeholder' 保留占位（默认）/ 'soft' 灰化遮罩
     previewMode: false,     // 规则预览：命中屏蔽不真正隐藏，只描边提示（确认无误杀后再关掉）
     peekHours: 24,          // 「仍然查看」放行有效期（小时，可调）
     firstMatchWins: false,  // 规则按顺序、首个命中生效（默认 false = 屏蔽优先于收藏/高亮）
     codeSearchBtns: true,   // 番号处显示多站直达链接
     keys: {},               // 自定义键位（{} = 全用 DEFAULT_KEYS；载入时归一化成完整表）
     autoSeen: true,         // 打开详情页时自动把该番号标为已看（不用手动点）
-    auditWarn: true         // 建屏蔽规则前先估算影响面，过宽时先确认
+    auditWarn: true,        // 建屏蔽规则前先估算影响面，过宽时先确认
+    autoBackup: false,      // 每天自动备份整库到下载目录（实际执行在 background.js）
+    backupKeep: 7,          // 自动备份快照轮换份数：0 = 不轮换（无限累积）
+    backfill: 'off'         // 番号站数量补足：'off'（默认，绝不联网）/ 'same'（补齐到原始数量）/ 正整数（指定数量）
+                            // ⚠ 这是全库唯一会发网络请求的开关，且仅对 JavDB580 生效（见 doBackfill 注释）
   };
 
   // 「仍然查看」放行有效期（可调：设置页「软屏蔽 → 放行有效期」）
@@ -260,12 +265,36 @@
   /* 按主机名取模板 / 取该站生效的维度规则（站点专属 dims 优先，再回落全局）。
      结果按 host 缓存，避免每轮 pass 反复拼数组。 */
   var _tplCache = {};
+  /* 按主机名找站点模板。
+   * ⚠️ 必须「先精确、后模糊」两级匹配，不能只按 SITE_TEMPLATES 的书写顺序取首个 host 命中：
+   *   s_javdb.host = /javdb/i 排在 s_javdb580.host = /javdb580/i 之前，
+   *   顺序首匹配会把 javdb580.com / javdb571.com 全部误判成 s_javdb
+   *   （连带影响：cardSelOf 拿到错的选择器、镜像组归错、panel 站点名显示错、
+   *     以及番号站数量补足因为容器选择器不对而完全失效）。
+   * 第一级：pattern 直接匹配 location.href（`*://*.javdb580.com/*` 只认它自己）；
+   * 第二级：退回 host 正则顺序匹配，保留对未登记子域/镜像的容错。 */
   function templateForHost(host) {
     host = String(host || '');
     if (_tplCache[host] !== undefined) return _tplCache[host];
+    var href = '';
+    try { href = (typeof location !== 'undefined' && location.href) || ''; } catch (e) { href = ''; }
     var hit = null;
-    for (var i = 0; i < SITE_TEMPLATES.length; i++) {
-      if (SITE_TEMPLATES[i].host.test(host)) { hit = SITE_TEMPLATES[i]; break; }
+    if (href) {
+      for (var p = 0; p < SITE_TEMPLATES.length; p++) {
+        var t0 = SITE_TEMPLATES[p];
+        if (!t0 || !t0.pattern) continue;
+        try {
+          if (globToRegex(t0.pattern).test(href)) { hit = t0; break; }
+          // 与 matchSite 同一套裸域兼容：`*://*.x.com/*` 也要认 https://x.com/
+          if (/^\*:\/\/\*\./.test(t0.pattern) &&
+            globToRegex(t0.pattern.replace('*://*.', '*://')).test(href)) { hit = t0; break; }
+        } catch (e) { /* 非法 pattern 跳过 */ }
+      }
+    }
+    if (!hit) {
+      for (var i = 0; i < SITE_TEMPLATES.length; i++) {
+        if (SITE_TEMPLATES[i].host.test(host)) { hit = SITE_TEMPLATES[i]; break; }
+      }
     }
     _tplCache[host] = hit;
     return hit;
@@ -312,7 +341,7 @@
   var QUALITY_RE = /(2160p|4K|1080p|720p|480p|360p)/i;
 
   /* ---------------- 运行时状态 ---------------- */
-  var S = { settings: {}, sites: [], rules: [], seen: {}, favCodes: {}, discovered: {}, groups: [], statsLog: {}, watchlist: {}, cooc: {}, peeks: {}, errLog: [] };
+  var S = { settings: {}, sites: [], rules: [], seen: {}, favCodes: {}, discovered: {}, groups: [], statsLog: {}, watchlist: {}, cooc: {}, peeks: {}, errLog: [], shopMarks: {} };
 
   /* 增量提取缓存：同一张卡片只跑一次 extract()（无限滚动追加卡片时只算新的）
      注意：缓存键是卡片元素，但卡片内容可能被就地更新（懒加载标题 / 状态角标 / 换图），
@@ -346,6 +375,65 @@
       return '<a class="cf-mini cf-gos" href="' + escapeHtml(u) + '" target="_blank" rel="noopener" ' +
         'title="在 ' + cs.n + ' 搜索 ' + escapeHtml(code) + '">' + cs.n + '</a>';
     }).join('');
+  }
+
+  /* ---------------- 多站比价（建议 ②） ----------------
+   * 为什么不做「自动抓各站价格/是否有货」：
+   *   四个番号站里 JavDB 被 Cloudflare 挑战挡、JavBus 302 到年龄门、JavDB571 直接连不上，
+   *   只有 JavDB580 能返回正常 HTML。再加上跨域限制，扩展内无法稳定地"替你问一圈"。
+   *   硬做只会得到一个经常失效、还容易被反爬盯上的功能。
+   *
+   * 所以这里做的是诚实版：
+   *   ① 一键四站齐开 —— 让浏览器替你开（带你的登录态与代理，不受扩展 CORS 限制）
+   *   ② 本地标记 —— 你在哪几个站看到过 / 哪个站有磁力，勾一下记进 S.shopMarks，
+   *      累积成徽标。下次再遇到同一个番号，一眼就知道"上次在 580 有货"。
+   * 零网络请求，纯本地累积。 */
+  var SHOP_FIELDS = [
+    ['has', '有资源', '#7ee0a5'],
+    ['magnet', '有磁力', '#9beaff'],
+    ['hd', '高清', '#ffc93c'],
+    ['fav', '想要', '#ff4d6d']
+  ];
+  function shopMarkOf(code) {
+    if (!code) return null;
+    return (S.shopMarks || {})[code] || null;
+  }
+  // 该番号被打过标记的站点数（用于列表徽标）
+  function shopMarkCount(code) {
+    var m = shopMarkOf(code);
+    if (!m) return 0;
+    var n = 0;
+    CODE_SITES.forEach(function (cs) {
+      var e = m[cs.n];
+      if (e && SHOP_FIELDS.some(function (f) { return e[f[0]]; })) n++;
+    });
+    return n;
+  }
+  function openAllSites(code) {
+    if (!code) return;
+    // 逐个 open 而不是一次性开 4 个 —— 浏览器对单次手势内的多次 open 通常会拦掉后面的，
+    // 所以第一个立刻开，其余用短延时间隔（多数浏览器会放行）。
+    var list = CODE_SITES.slice();
+    list.forEach(function (cs, i) {
+      var u = cs.tpl.replace('{q}', encodeURIComponent(code));
+      if (i === 0) window.open(u, '_blank', 'noopener');
+      else setTimeout(function () { try { window.open(u, '_blank', 'noopener'); } catch (e) { } }, i * 120);
+    });
+    flashBall('已打开 ' + list.length + ' 个站点');
+  }
+  // 切换某个站点上的某个标记
+  function toggleShopMark(code, siteKey, field) {
+    if (!code || !siteKey || !field) return;
+    S.shopMarks = S.shopMarks || {};
+    var m = S.shopMarks[code] || (S.shopMarks[code] = {});
+    var e = m[siteKey] || (m[siteKey] = {});
+    if (e[field]) delete e[field]; else e[field] = 1;
+    // 全空的站点条目直接删掉，避免存储里堆一堆空对象
+    if (!SHOP_FIELDS.some(function (f) { return e[f[0]]; })) delete m[siteKey];
+    if (!Object.keys(m).length) delete S.shopMarks[code];
+    saveState({ shopMarks: S.shopMarks });
+    // 列表里的「比价 N」徽标要跟着变（浮层是独立节点，重绘它不会顺带更新列表）
+    if (activeTab === 'favcode') renderFavCodes();
   }
   /* 镜像站点归一：javdb.com / javdb571.com / javdb580.com 是同一个站的三个域名。
      发现库按「来源组」记而不是按域名记 —— 否则同一个演员在三个镜像上逛一圈，
@@ -521,6 +609,18 @@
           if (have[s.id]) return;
           x.sites.push({ id: s.id, pattern: s.pattern, enabled: true, selector: '', note: s.note });
         });
+      },
+      // v5 → v6：屏蔽显示方式从二元开关 softBlock 升级为三档 blockDisplay。
+      //           **迁移必须尊重老用户既有行为，不能顺手改成新默认值** ——
+      //           否则升级瞬间所有老用户的页面观感突变（本来是"完全隐藏"，
+      //           突然变成满屏空格）。所以：勾过软屏蔽的 → 'soft'，没勾的 → 'hide'。
+      //           'placeholder' 只作为全新安装的默认（在 DEFAULT_SETTINGS 里）。
+      6: function (x) {
+        x.settings = x.settings || {};
+        if (!x.settings.blockDisplay) {
+          x.settings.blockDisplay = x.settings.softBlock ? 'soft' : 'hide';
+        }
+        delete x.settings.softBlock;   // 旧字段清掉，避免两份真相并存
       }
     };
     for (var v = from + 1; v <= SCHEMA_VERSION; v++) {
@@ -554,6 +654,7 @@
           S.recFeedbackDaily = d.recFeedbackDaily || {};
           S.peeks = d.peeks || {};
           S.errLog = d.errLog || [];
+          S.shopMarks = d.shopMarks || {};
           resolve();
         });
       } catch (e) { resolve(); }
@@ -563,7 +664,7 @@
   function saveState(patch) {
     return new Promise(function (resolve) {
       cfGet(function (o) {
-        var d = Object.assign({ sites: S.sites, rules: S.rules, seen: S.seen, favCodes: S.favCodes, discovered: S.discovered, groups: S.groups, statsLog: S.statsLog, dailyRecs: S.dailyRecs, recHistory: S.recHistory, recFeedback: S.recFeedback, watchlist: S.watchlist, cooc: S.cooc, similarRecs: S.similarRecs, recFeedbackDaily: S.recFeedbackDaily, peeks: S.peeks, errLog: S.errLog, settings: S.settings }, o || {});
+        var d = Object.assign({ sites: S.sites, rules: S.rules, seen: S.seen, favCodes: S.favCodes, discovered: S.discovered, groups: S.groups, statsLog: S.statsLog, dailyRecs: S.dailyRecs, recHistory: S.recHistory, recFeedback: S.recFeedback, watchlist: S.watchlist, cooc: S.cooc, similarRecs: S.similarRecs, recFeedbackDaily: S.recFeedbackDaily, peeks: S.peeks, errLog: S.errLog, shopMarks: S.shopMarks, settings: S.settings }, o || {});
         if (patch) Object.assign(d, patch);
         var payload = {};
         payload[DATA_KEY] = d;
@@ -1171,10 +1272,10 @@
   var applying = false;   // 防止 runPass 自身改 DOM 触发 MutationObserver 造成死循环
 
   function clearMarks() {
-    var els = document.querySelectorAll('.cf-blocked,.cf-fav,.cf-hl,.cf-seen,.cf-sfw,.cf-favcode,.cf-watch,.cf-card,.cf-dl,.cf-soft,.cf-peek,.cf-preview');
+    var els = document.querySelectorAll('.cf-blocked,.cf-placeholder,.cf-fav,.cf-hl,.cf-seen,.cf-sfw,.cf-favcode,.cf-watch,.cf-card,.cf-dl,.cf-soft,.cf-peek,.cf-preview');
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
-      el.classList.remove('cf-blocked', 'cf-fav', 'cf-hl', 'cf-seen', 'cf-sfw', 'cf-favcode', 'cf-watch', 'cf-card', 'cf-dl', 'cf-soft', 'cf-peek', 'cf-preview');
+      el.classList.remove('cf-blocked', 'cf-placeholder', 'cf-fav', 'cf-hl', 'cf-seen', 'cf-sfw', 'cf-favcode', 'cf-watch', 'cf-card', 'cf-dl', 'cf-soft', 'cf-peek', 'cf-preview');
       try { delete el.dataset.cfCode; } catch (e) { }
       el.style.removeProperty('--cf-hl-color');
       el.style.removeProperty('--cf-hl-glow');
@@ -1195,13 +1296,14 @@
   }
 
   // 重跑前先清掉上一轮的状态类。
-  // 关键：.cf-blocked 是 display:none，而 findCards() 用 getBoundingClientRect 判可见，
+  // 关键：'hide' 档的 .cf-blocked 是 display:none、'placeholder' 档的 .cf-placeholder 是
+  // visibility:hidden，而 findCards() 用 getBoundingClientRect 判可见 ——
   // 若不先清除，被隐藏过的卡片会被过滤掉 → 规则撤销/清空后永远无法恢复。
   function resetPassMarks() {
-    var els = document.querySelectorAll('.cf-blocked,.cf-soft,.cf-peek,.cf-fav,.cf-hl,.cf-seen,.cf-sfw,.cf-favcode,.cf-watch,.cf-filt-out,.cf-preview');
+    var els = document.querySelectorAll('.cf-blocked,.cf-placeholder,.cf-soft,.cf-peek,.cf-fav,.cf-hl,.cf-seen,.cf-sfw,.cf-favcode,.cf-watch,.cf-filt-out,.cf-preview');
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
-      el.classList.remove('cf-blocked', 'cf-soft', 'cf-peek', 'cf-fav', 'cf-hl', 'cf-seen', 'cf-sfw', 'cf-favcode', 'cf-watch', 'cf-filt-out', 'cf-preview');
+      el.classList.remove('cf-blocked', 'cf-placeholder', 'cf-soft', 'cf-peek', 'cf-fav', 'cf-hl', 'cf-seen', 'cf-sfw', 'cf-favcode', 'cf-watch', 'cf-filt-out', 'cf-preview');
       el.style.removeProperty('--cf-hl-color');
       el.style.removeProperty('--cf-hl-glow');
       var pb = el.querySelector(':scope > .cf-peekbtn');
@@ -1216,6 +1318,15 @@
         try { if (pos.parent) pos.parent.insertBefore(c, pos.next || null); } catch (e) { }
         origPos.delete(c);
       }
+    }
+  }
+  // 只清掉上一轮补足克隆进来的卡片（不碰站点原生卡片）。
+  // 补足的目标数是「原始数量」，所以每次 pass 都要先把克隆清干净，
+  // 否则第二轮的 originalCount 会把克隆也算进去 → 目标数越滚越大。
+  function clearClones() {
+    var els = document.querySelectorAll('.cf-cloned');
+    for (var i = 0; i < els.length; i++) {
+      try { els[i].remove(); } catch (e) { }
     }
   }
 
@@ -1298,8 +1409,12 @@
     }
 
     resetPassMarks();
+    // 补足前先把上一轮克隆清掉：本轮要重新算「原始数量」，克隆必须先出局
+    clearClones();
     var cards = findCards();
     stats = { cards: cards.length, blocked: 0, fav: 0, hl: 0, dl: 0, soft: 0, preview: 0 };
+    // 此刻 cards 全是站点原生卡片 —— 这就是「原始数量」，补足以它为基准
+    var origCount = cards.length;
     foundActress = new Map();
     foundTag = new Map();
     foundMaker = new Map();
@@ -1318,6 +1433,13 @@
 
     navIdx = -1;
     cards.forEach(function (card) {
+      // 克隆卡（补足来的）不参与任何规则判定：它们是"补位内容"，被本页规则再屏蔽
+      // 一次的话补足就白做了。清干净可能残留的状态类后直接跳过。
+      if (card.classList.contains('cf-cloned') || card.dataset.cfClone === '1') {
+        card.classList.add('cf-cloned', 'cf-card');
+        card.classList.remove('cf-blocked', 'cf-placeholder', 'cf-soft', 'cf-filt-out');
+        return;
+      }
       // 增量：同一张卡片只提取一次（无限滚动追加卡片时只算新的那批）
       var sig = cardSig(card);
       var ctx = extractCache.get(card);
@@ -1363,8 +1485,8 @@
           whyMap.set(card, reasons);
           stats.blocked++; stats.preview = (stats.preview || 0) + 1;
           return;
-        } else if (st.softBlock) {
-          // 软屏蔽：灰化 + 模糊遮罩，卡片上浮出「仍然查看」按钮
+        } else if (st.blockDisplay === 'soft') {
+          // 灰化遮罩：灰化 + 模糊遮罩，卡片上浮出「仍然查看」按钮
           card.classList.add('cf-soft', 'cf-card');
           try { card.dataset.cfCode = ctx.code || ''; card.dataset.cfA = ctx.actressList.join(' || '); } catch (e) { }
           ensurePeekBtn(card, ctx.cid);
@@ -1372,7 +1494,11 @@
           stats.blocked++; stats.soft++;
           return;
         } else {
-          card.classList.add('cf-blocked', 'cf-card');   // 被屏蔽的卡片也要能悬停查看原因
+          // 被屏蔽的卡片也要能悬停查看原因
+          card.classList.add('cf-blocked', 'cf-card');
+          // 保留占位（默认档）：挂 .cf-placeholder 把 display:none 换成 visibility:hidden，
+          // 网格位置与卡片数量都不变，只是看不见。'hide' 档不挂，走上面的 display:none。
+          if (st.blockDisplay !== 'hide') card.classList.add('cf-placeholder');
           whyMap.set(card, reasons);
           stats.blocked++;
           return;
@@ -1380,16 +1506,22 @@
       }
 
       // 只记录没被屏蔽的内容（不想看的人不该被推荐）
-      ctx.actressItems.forEach(function (it) { noteDiscovered('actress', it.name, { href: it.href }); });
-      // 共现记录：为「相似女优」提供输入（含作品，供「共同出演」下钻）
-      var _coA = card.querySelector('a[href]');
-      var _coUrl = _coA ? absoluteUrl(_coA.getAttribute('href')) : '';
-      ctx.actressList.forEach(function (n) { noteCooc(n, ctx, _coUrl); });
-      ctx.actressList.forEach(function (n) { noteDiscovered('actress', n); });
-      ctx.tagList.forEach(function (n) { noteDiscovered('tag', n); });
-      ctx.makerList.forEach(function (n) { noteDiscovered('maker', n); });
-      ctx.seriesList.forEach(function (n) { noteDiscovered('series', n); });
-      ctx.directorList.forEach(function (n) { noteDiscovered('director', n); });
+      // 克隆卡片（补足抓来的下一页内容）跳过所有发现库/共现写入 ——
+      // noteDiscovered 的口径是「你真实浏览过的内容」，补足的是同页之外的东西，
+      // 记进去会让「推荐」与「规则体检的命中面」都被稀释。
+      var isClone = card.classList.contains('cf-cloned');
+      if (!isClone) {
+        ctx.actressItems.forEach(function (it) { noteDiscovered('actress', it.name, { href: it.href }); });
+        // 共现记录：为「相似女优」提供输入（含作品，供「共同出演」下钻）
+        var _coA = card.querySelector('a[href]');
+        var _coUrl = _coA ? absoluteUrl(_coA.getAttribute('href')) : '';
+        ctx.actressList.forEach(function (n) { noteCooc(n, ctx, _coUrl); });
+        ctx.actressList.forEach(function (n) { noteDiscovered('actress', n); });
+        ctx.tagList.forEach(function (n) { noteDiscovered('tag', n); });
+        ctx.makerList.forEach(function (n) { noteDiscovered('maker', n); });
+        ctx.seriesList.forEach(function (n) { noteDiscovered('series', n); });
+        ctx.directorList.forEach(function (n) { noteDiscovered('director', n); });
+      }
 
       var isFav = !!favRule;
       if (favRule) hitDelta.set(favRule.id, (hitDelta.get(favRule.id) || 0) + 1);
@@ -1452,6 +1584,8 @@
     try {
       chrome.runtime.sendMessage({ type: 'sf_stats', blocked: stats.blocked }).catch(function () { });
     } catch (e) { }
+    // 补足放到最后（不阻塞本轮渲染）：只有开了开关、且是已实测可用的番号站时才会真的发请求
+    if (backfillAllowed()) doBackfill(origCount);
     } catch (e) { logErr('runPass', e); }
     finally {
       applying = false;
@@ -1459,6 +1593,178 @@
   }
 
   var schedulePass = debounce(runPass, 260);
+
+  /* ---------------- 番号站数量补足（需求 002 L2） ----------------
+   * 解决的问题：「保留占位」虽然保住了格数，但卡片本身看不见了，列表还是显得稀。
+   * 补足 = 去下一页抓卡片克隆过来，把「原始数量」填满。
+   *
+   * ⚠️ 这是全库唯一会发网络请求的地方（README 的「零网络请求」承诺必须在 README 里
+   *    显式标注这个例外）。因此三道闸门缺一不可：
+   *      ① 开关默认 off ② 仅在监管中的「番号站」 ③ 仅 JavDB580
+   *    第 ③ 条是实测结论，不是保守：2026-09-22 真机抓取验证 ——
+   *      · JavDB      → HTTP 200 但只有 1278B，被 Cloudflare 挑战 + 地区版权封锁
+   *      · JavBus     → 302 到 /doc/driver-verify 年龄门
+   *      · JavDB571   → HTTP 000（连接失败）
+   *      · JavDB580   → HTTP 200 / 70KB 正常 SSR，?page=1 与 ?page=2 内容不同、选择器同构 ✅
+   *    其余站抓了也拿不到卡片，硬做只会得到一个经常失效还容易被反爬盯上的功能。
+   *
+   * 只克隆、不改站点分页器；克隆卡片带 .cf-cloned 便于识别与清理；
+   * 克隆卡片不写入发现库（noteDiscovered 只记真实浏览过的内容，克隆会污染推荐）。 */
+  var BACKFILL_HOST_OK = /javdb580/i;
+  var BACKFILL_MAX_PAGES = 3;      // 最多补几页，防「整页全被屏蔽」时无限抓
+  var BACKFILL_MIN_GAP = 1200;     // 同站两次请求最小间隔（ms），避免被判定爬虫
+  var lastBackfillAt = 0;
+  var backfilling = false;
+
+  function backfillEnabled() {
+    var v = S.settings && S.settings.backfill;
+    return !!(v && v !== 'off');
+  }
+  // 补足目标数量：'same' = 补齐到屏蔽前的原始数量；数字 = 用户指定
+  function backfillTarget(origCount) {
+    var v = S.settings && S.settings.backfill;
+    if (v === 'same' || v === true) return origCount;
+    var n = parseInt(v, 10);
+    return (n > 0) ? n : origCount;
+  }
+  function backfillAllowed() {
+    if (!backfillEnabled()) return false;
+    if (!currentSite) return false;
+    if (!BACKFILL_HOST_OK.test(location.hostname)) return false;
+    return true;
+  }
+  // 找出当前分页参数并推到下一页
+  function nextPageUrl() {
+    try {
+      var u = new URL(location.href);
+      var p = parseInt(u.searchParams.get('page') || '1', 10);
+      if (isNaN(p) || p < 1) p = 1;
+      u.searchParams.set('page', String(p + 1));
+      return u.href;
+    } catch (e) { return ''; }
+  }
+  // 清掉上一轮克隆的卡片（重跑前必做，否则越积越多）
+  function removeClones() {
+    var els = document.querySelectorAll('.cf-cloned');
+    for (var i = 0; i < els.length; i++) {
+      try { els[i].remove(); } catch (e) { }
+    }
+  }
+  var cardSelOf = function () {
+    var t = templateForHost(location.hostname);
+    return (t && t.sel && t.sel.length) ? t.sel : ['.item'];
+  };
+  // 从一段 HTML 里抓出卡片元素（复用与 findCards 同一套选择器优先级）
+  function cardsFromHtml(html) {
+    var doc;
+    try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch (e) { return []; }
+    if (!doc) return [];
+    var sels = cardSelOf();
+    for (var i = 0; i < sels.length; i++) {
+      var got = doc.querySelectorAll(sels[i]);
+      if (got.length >= 3) return Array.prototype.slice.call(got);
+    }
+    return [];
+  }
+
+  /* 当前「还看得见」的原生卡片数（排除克隆、排除被屏蔽的）。
+   * ⚠️ 统计口径必须与 runPass 里的 `cards` 对齐：runPass 用的是 findCards()，
+   *    它按选择器**优先级**取第一组满足的，不是把所有选择器并起来（`.item` 和
+   *    `.movie-box` 常指向同一批卡片，并集会把数量翻倍）。所以这里同样走 findCards()。
+   * 三档屏蔽下口径不同：
+   *   soft        → 模糊但仍在，算「看得见」（视觉上是压缩过的，不该再补）
+   *   placeholder → 原位置留白，等于看不见，要补
+   *   hide        → display:none，等于看不见，要补 */
+  function visibleCount() {
+    var cards = findCards();
+    var n = 0;
+    for (var i = 0; i < cards.length; i++) {
+      var c = cards[i];
+      if (c.classList.contains('cf-cloned')) continue;
+      if (c.classList.contains('cf-blocked') && !c.classList.contains('cf-placeholder')) continue;
+      if (c.classList.contains('cf-filt-out')) continue;
+      n++;
+    }
+    return n;
+  }
+
+  function doBackfill(origCount) {
+    if (backfilling) return;
+    if (!backfillAllowed()) return;
+
+    // 容器 = 原生卡片里最后一张的父节点（保持网格结构一致）。
+    // ⚠️ 必须用 findCards() 取卡片，不能把 cardSelOf() 的选择器并起来 ——
+    //    `.item` 与 `a.box`/`.movie-box` 常指向同一批卡片的**不同层级**，
+    //    并集的最后一项是内层 <a>，它的 parentNode 是外层卡片而不是网格容器，
+    //    克隆卡片会被塞进单个卡片的内部（真实表现：DOM 里找不到 .cf-cloned，功能静默失效）。
+    var native = findCards().filter(function (c) { return !c.classList.contains('cf-cloned'); });
+    if (!native.length) return;
+    var container = native[native.length - 1].parentNode;
+    if (!container) return;
+
+    // 目标 = 用户配的口径（'same' 就是「补齐回原始数量」，数字就是用户指定的张数）。
+    // ⚠️ 不能拿 origCount 去算 need：origCount 是**屏蔽前**的原生卡片数，此刻 DOM 里
+    //    就这么多张，相减恒为 0，补足永远不会触发。真正的缺口是「原始数量 - 当前可见
+    //    （未被屏蔽）数量」——也就是被屏蔽掉、需要拿新内容顶上的那一部分。
+    var target = backfillTarget(origCount);
+    var need = target - visibleCount();
+    if (need <= 0) return;
+
+    var now = Date.now();
+    if (now - lastBackfillAt < BACKFILL_MIN_GAP) return;
+    lastBackfillAt = now;
+    backfilling = true;
+
+    var pageUrl = nextPageUrl();
+    if (!pageUrl) { backfilling = false; return; }
+    var added = 0, pages = 0;
+
+    var step = function () {
+      if (pages >= BACKFILL_MAX_PAGES || added >= need) {
+        backfilling = false;
+        // ⚠️ 这里**绝对不能**调 schedulePass()：
+        //    runPass 开头就是 clearClones() + 重算 visibleCount()，
+        //    克隆刚插进去就被清掉 → doBackfill 又判定 need>0 → 再抓一次 →
+        //    无限循环打站点（实测 3 秒内发了 2 次请求，且永远不产生克隆）。
+        //    克隆卡自己挂的 class 由 clearMarks/resetPassMarks 负责渲染，
+        //    不需要再跑一轮完整 pass。只给用户一个反馈就够了。
+        if (added) flashBall('已补足 ' + added + ' 张');
+        return;
+      }
+      pages++;
+      // credentials:'omit' —— 补足只是取公开列表页，不带 cookie，减少被识别为登录态爬虫的风险
+      fetch(pageUrl, { credentials: 'omit' }).then(function (r) {
+        if (!r || !r.ok) throw new Error('HTTP ' + (r && r.status));
+        return r.text();
+      }).then(function (html) {
+        var got = cardsFromHtml(html);
+        if (!got.length) throw new Error('未解析出卡片');
+        got.forEach(function (el) {
+          if (added >= need) return;
+          var clone = el.cloneNode(true);
+          clone.classList.add('cf-cloned', 'cf-card');
+          // 克隆卡不参与发现库写入，也不带原位置记录
+          try { delete clone.dataset.cfCode; } catch (e) { }
+          // 克隆卡是「补充内容」，不该再被本站规则二次处理（否则会被重新屏蔽，
+          // 补足等于白补）。这里直接挂一条规则免疫标记，由 applyFilter/规则分支跳过。
+          try { clone.dataset.cfClone = '1'; } catch (e) { }
+          container.appendChild(clone);
+          added++;
+        });
+        // 抓够就停，否则顺延到再下一页
+        var u = new URL(pageUrl);
+        var p = parseInt(u.searchParams.get('page') || '1', 10) || 1;
+        u.searchParams.set('page', String(p + 1));
+        pageUrl = u.href;
+        setTimeout(step, BACKFILL_MIN_GAP);
+      }).catch(function (e) {
+        // 失败降级：静默放弃，退回 placeholder 行为，只写日志
+        backfilling = false;
+        logErr('backfill', e);
+      });
+    };
+    setTimeout(step, 300);
+  }
 
   /* ---------------- 悬浮球 + 面板（Shadow DOM 隔离） ---------------- */
   var UI_CSS = [
@@ -1496,6 +1802,12 @@
     'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);font-size:12px;color:#c9cfdd;}',
     '.cf-tg label.on{background:rgba(0,229,255,.14);border-color:rgba(0,229,255,.45);color:#8beeff;}',
     '.cf-tg input{accent-color:#00e5ff;margin:0;}',
+    /* 屏蔽显示方式的循环按钮：与 label 同款胶囊外观，但用 button 承载三档轮换 */
+    '.cf-tg .cf-bd{display:inline-flex;align-items:center;padding:3px 8px;border-radius:20px;cursor:pointer;',
+    'background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);font-size:12px;color:#c9cfdd;',
+    'font-family:inherit;transition:background .15s,border-color .15s,color .15s;}',
+    '.cf-tg .cf-bd:hover{background:rgba(255,255,255,.1);color:#e6e8ee;}',
+    '.cf-tg .cf-bd.cf-bd-on{background:rgba(0,229,255,.14);border-color:rgba(0,229,255,.45);color:#8beeff;}',
     '.cf-st{display:flex;gap:8px;padding:8px 12px;font-size:12px;color:#9aa3b8;border-bottom:1px solid rgba(255,255,255,.07);}',
     '.cf-st b{color:#fff;font-weight:600;}',
     '.cf-tabs{display:flex;flex-wrap:wrap;gap:4px;padding:8px 12px 0;}',
@@ -1524,6 +1836,23 @@
     '.cf-dlrow .info{flex:1;min-width:0;overflow:hidden;}',
     '.cf-dlrow .n{font-size:12px;color:#dfe4ef;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
     '.cf-dlrow .m{font-size:10px;color:#7a8399;margin-top:2px;}',
+    /* 多站比价（建议 ②）：列表徽标 + 浮层 */
+    '.cf-shopbadge{font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(124,92,255,.22);color:#c3b0ff;}',
+    '.cf-gosrow{display:flex;gap:5px;flex-wrap:wrap;margin:-2px 0 7px;padding-left:2px;}',
+    '.cf-shoppanel{position:fixed;z-index:2147483646;width:280px;background:#141821;border:1px solid rgba(255,255,255,.14);',
+    'border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.55);padding:10px;font-size:12px;color:#dfe4ef;}',
+    '.cf-shopphd{font-size:12px;color:#fff;margin-bottom:6px;display:flex;align-items:center;}',
+    '.cf-shopptip{font-size:10px;color:#7a8399;line-height:1.5;margin-bottom:8px;padding-bottom:7px;border-bottom:1px solid rgba(255,255,255,.08);}',
+    '.cf-shoppgrid{display:flex;flex-direction:column;gap:5px;}',
+    '.cf-shoprow{display:flex;align-items:center;gap:6px;}',
+    '.cf-shopname{flex:none;width:44px;font-size:11px;color:#9beaff;text-decoration:none;}',
+    '.cf-shopname:hover{text-decoration:underline;}',
+    '.cf-shopmks{display:flex;gap:4px;flex-wrap:wrap;}',
+    '.cf-shopmk{border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#aab2c6;',
+    'border-radius:5px;font-size:10px;padding:1px 5px;cursor:pointer;}',
+    '.cf-shopmk:hover{background:rgba(255,255,255,.12);color:#fff;}',
+    '.cf-shopmk.on{font-weight:600;}',
+    '.cf-shoppf{display:flex;gap:6px;margin-top:9px;padding-top:8px;border-top:1px solid rgba(255,255,255,.08);}',
     '.cf-dlbar{display:flex;gap:6px;padding:0 0 8px;}',
     '.cf-dlbar button{flex:1;padding:5px 0;border-radius:7px;border:1px solid rgba(255,255,255,.14);',
     'background:rgba(255,255,255,.05);color:#dfe4ef;cursor:pointer;font-size:11px;}',
@@ -1552,11 +1881,11 @@
     'transition:background .15s,color .15s,transform .12s;}',
     '.cf-hd button:active{transform:scale(.88);}',
     '.cf-hd button.on{background:rgba(255,201,60,.16);color:#ffc93c;}',
-    '.cf-tg label,.cf-tabs button,.cf-mini,.cf-quick .r2 button,.cf-foot button,.cf-filter button,.cf-dlbar button{',
+    '.cf-tg label,.cf-tabs button,.cf-mini,.cf-quick .r2 button,.cf-foot button,.cf-filter button,.cf-dlbar button,.cf-tg .cf-bd{',
     'transition:background .15s,border-color .15s,color .15s,transform .12s;}',
-    '.cf-tg label:active,.cf-tabs button:active,.cf-mini:active,',
+    '.cf-tg label:active,.cf-tabs button:active,.cf-mini:active,.cf-tg .cf-bd:active,',
     '.cf-quick .r2 button:active,.cf-foot button:active,.cf-filter button:active{transform:scale(.94);}',
-    '.cf-hd button:focus-visible,.cf-tabs button:focus-visible,.cf-mini:focus-visible,',
+    '.cf-hd button:focus-visible,.cf-tabs button:focus-visible,.cf-mini:focus-visible,.cf-tg .cf-bd:focus-visible,',
     '.cf-quick .r2 button:focus-visible,.cf-foot button:focus-visible,.cf-filter button:focus-visible{',
     'outline:2px solid rgba(0,229,255,.75);outline-offset:1px;}',
     /* 推荐卡片墙 */
@@ -1726,7 +2055,7 @@
       '    <label data-tg="sfw"><input type="checkbox" data-cb="sfw">SFW</label>',
       '    <label data-tg="onlyFav"><input type="checkbox" data-cb="onlyFav">只看收藏</label>',
       '    <label data-tg="onlyFavCode"><input type="checkbox" data-cb="onlyFavCode">只看★番号</label>',
-      '    <label data-tg="softBlock"><input type="checkbox" data-cb="softBlock">软屏蔽</label>',
+      '    <button type="button" class="cf-bd" id="bdBtn" title="切换屏蔽后的显示方式"></button>',
       '    <label data-tg="previewMode"><input type="checkbox" data-cb="previewMode">规则预览</label>',
       '    <label data-tg="boss"><input type="checkbox" data-cb="boss">老板键</label>',
       '  </div>',
@@ -1786,6 +2115,7 @@
     var lockBtn = sr.getElementById('lockBtn');
     var searchEl = sr.getElementById('search');
     var warnEl = sr.getElementById('warn');
+    var bdBtn = sr.getElementById('bdBtn');
     var pickEl = sr.getElementById('pick');
 
     var TABS = [
@@ -1806,7 +2136,7 @@
       dots.appendChild(d);
     });
 
-    ui = { host: host, sr: sr, ball: ball, panel: panel, list: list, stats: statsEl, qin: qin, qtype: qtype, dots: dots, tabs: tabsEl, tabDefs: TABS, flRating: flRating, flDate: flDate, importBtn: importBtn, lockBtn: lockBtn, search: searchEl, warn: warnEl, pick: pickEl };
+    ui = { host: host, sr: sr, ball: ball, panel: panel, list: list, stats: statsEl, qin: qin, qtype: qtype, dots: dots, tabs: tabsEl, tabDefs: TABS, flRating: flRating, flDate: flDate, importBtn: importBtn, lockBtn: lockBtn, search: searchEl, warn: warnEl, pick: pickEl, bdBtn: bdBtn };
 
     flRating.addEventListener('change', applyFilter);
     flDate.addEventListener('change', applyFilter);
@@ -1850,6 +2180,7 @@
         return;
       }
       if (t.dataset && t.dataset.tab) { activeTab = t.dataset.tab; renderList(); return; }
+      if (t.id === 'bdBtn' || (t.dataset && t.dataset.bdcycle)) { cycleBd(); return; }
       if (t.dataset && t.dataset.fcv) { favFilter = t.dataset.fcv; renderFavCodes(); return; }
       if (t.dataset && t.dataset.watch) { watchDone(t.dataset.watch); return; }
       if (t.dataset && t.dataset.wdel) { watchRemove(t.dataset.wdel); return; }
@@ -1902,6 +2233,11 @@
       // 番号收藏：移除
       if (mini && mini.dataset.unfav) {
         toggleFavCode(mini.dataset.unfav, null);
+        return;
+      }
+      // 多站比价：打开比价浮层
+      if (mini && mini.dataset.shop) {
+        showShopPanel(mini.dataset.shop);
         return;
       }
     });
@@ -2024,6 +2360,37 @@
       var lab = cbs[i].parentElement;
       if (lab) lab.classList.toggle('on', !!S.settings[k]);
     }
+    syncBdBtn();
+  }
+
+  /* 屏蔽显示方式：面板里用一枚按钮循环三档（设置页是下拉，见 options.html）。
+     三档的顺序按「看得见的程度」递增：隐藏 → 占位 → 灰化。 */
+  var BD_ORDER = ['hide', 'placeholder', 'soft'];
+  function bdLabel(v) {
+    if (v === 'hide') return '隐藏';
+    if (v === 'soft') return '灰化';
+    return '占位';
+  }
+  function syncBdBtn() {
+    if (!ui || !ui.bdBtn) return;
+    var cur = S.settings.blockDisplay || 'placeholder';
+    if (BD_ORDER.indexOf(cur) === -1) cur = 'placeholder';
+    ui.bdBtn.textContent = '屏蔽后：' + bdLabel(cur);
+    ui.bdBtn.title = '屏蔽后的显示方式（点击循环切换）\n' +
+      '隐藏 = 完全隐藏，格数会减少\n' +
+      '占位 = 保留位置，格数不变（默认）\n' +
+      '灰化 = 灰化遮罩 + 「仍然查看」临时放行';
+    ui.bdBtn.classList.toggle('cf-bd-on', cur !== 'hide');
+  }
+  function cycleBd() {
+    var cur = S.settings.blockDisplay || 'placeholder';
+    var i = BD_ORDER.indexOf(cur);
+    if (i === -1) i = 1;
+    S.settings.blockDisplay = BD_ORDER[(i + 1) % BD_ORDER.length];
+    saveSettings();
+    syncBdBtn();
+    schedulePass();
+    flashBall(bdLabel(S.settings.blockDisplay));
   }
 
   function syncDots() {
@@ -2427,15 +2794,80 @@
 
     var rows = list.slice(0, 200).map(function (c) {
       var it = S.favCodes[c];
+      var mk = shopMarkCount(c);
       return '<div class="cf-dlrow">' +
         '<span class="k">★</span>' +
-        '<span class="info"><span class="n">' + escapeHtml(c) + (S.seen[c] ? ' <span style="color:#6f7893;font-size:10px">已看</span>' : '') + '</span>' +
+        '<span class="info"><span class="n">' + escapeHtml(c) + (S.seen[c] ? ' <span style="color:#6f7893;font-size:10px">已看</span>' : '') +
+        (mk ? ' <span class="cf-shopbadge" title="你在 ' + mk + ' 个站点做过标记">比价 ' + mk + '</span>' : '') + '</span>' +
         '<span class="m">' + escapeHtml((it && it.t) || '') + '</span></span>' +
+        '<button class="cf-mini" data-shop="' + escapeHtml(c) + '" title="多站比价：一键齐开 + 本地标记">比价</button>' +
         '<button class="cf-mini" data-unfav="' + escapeHtml(c) + '">移除</button>' +
         '</div>' +
         (S.settings.codeSearchBtns === false ? '' : '<div class="cf-gosrow">' + codeSearchBtns(c) + '</div>');
     }).join('');
     ui.list.innerHTML = bar + rows;
+  }
+
+  /* ---------------- 比价浮层：一键齐开 + 逐站标记 ---------------- */
+  function showShopPanel(code) {
+    hideShopPanel();
+    if (!code) return;
+    var m = shopMarkOf(code) || {};
+    var el = document.createElement('div');
+    el.className = 'cf-shoppanel';
+    var rows = CODE_SITES.map(function (cs) {
+      var e = m[cs.n] || {};
+      var marks = SHOP_FIELDS.map(function (f) {
+        var on = !!e[f[0]];
+        return '<button class="cf-shopmk' + (on ? ' on' : '') + '" data-shopmk="' + f[0] + '" data-site="' + escapeHtml(cs.n) + '" ' +
+          'style="' + (on ? ('color:' + f[2] + ';border-color:' + f[2]) : '') + '">' + f[1] + '</button>';
+      }).join('');
+      var u = cs.tpl.replace('{q}', encodeURIComponent(code));
+      return '<div class="cf-shoprow">' +
+        '<a class="cf-shopname" href="' + escapeHtml(u) + '" target="_blank" rel="noopener">' + escapeHtml(cs.n) + '</a>' +
+        '<span class="cf-shopmks">' + marks + '</span></div>';
+    }).join('');
+    el.innerHTML =
+      '<div class="cf-shopphd"><b>' + escapeHtml(code) + '</b> · 多站比价' +
+      '<button class="cf-mini" id="cfShopClose" style="float:right">✕</button></div>' +
+      '<div class="cf-shopptip">各站是否有货 / 有磁力，要靠你自己看 —— 扩展不代你抓取（这些站有反爬，抓了也常失效）。' +
+      '看到的情况勾在这里，会累积成本地记录，下次一眼可见。</div>' +
+      '<div class="cf-shoppgrid">' + rows + '</div>' +
+      '<div class="cf-shoppf"><button class="cf-mini" id="cfShopAll">一键齐开全部站点</button>' +
+      '<button class="cf-mini" id="cfShopClear">清空本番号标记</button></div>';
+    document.documentElement.appendChild(el);
+
+    // 位置：面板左侧；贴边则改到右侧
+    try {
+      var pr = ui && ui.panel ? ui.panel.getBoundingClientRect() : null;
+      var w = el.getBoundingClientRect().width || 260;
+      var left = pr ? (pr.left - w - 10) : 20;
+      if (left < 8) left = pr ? (pr.right + 10) : 20;
+      el.style.left = Math.max(8, Math.min(left, window.innerWidth - w - 8)) + 'px';
+      el.style.top = Math.max(8, (pr ? pr.top : 60)) + 'px';
+    } catch (e) { }
+
+    el.addEventListener('click', function (ev) {
+      var t = ev.target;
+      if (t.id === 'cfShopClose') { hideShopPanel(); return; }
+      if (t.id === 'cfShopAll') { openAllSites(code); return; }
+      if (t.id === 'cfShopClear') {
+        if (S.shopMarks) delete S.shopMarks[code];
+        saveState({ shopMarks: S.shopMarks || {} });
+        flashBall('已清空 ' + code + ' 的标记');
+        hideShopPanel();
+        renderFavCodes();
+        return;
+      }
+      var f = t.dataset && t.dataset.shopmk;
+      if (f) { toggleShopMark(code, t.dataset.site, f); showShopPanel(code); }
+    });
+  }
+  function hideShopPanel() {
+    try {
+      var old = document.querySelector('.cf-shoppanel');
+      if (old) old.remove();
+    } catch (e) { }
   }
 
   /* ---------------- 面板内全局搜索 ---------------- */
@@ -3171,11 +3603,19 @@
     var arr = [], seen = {};
     var st = S.settings;
     if (st.probeLinks === false) { dlLinks = arr; stats.dl = 0; return; }
+    // 克隆卡片不参与链接探测：它们是「同一页之外」的内容，
+    // 探测结果会混进「下载」页签，也会让 stats.dl 虚高。
+    var scope = document.querySelectorAll('.cf-cloned');
+    var inClone = function (el) {
+      for (var k = 0; k < scope.length; k++) { if (scope[k].contains(el)) return true; }
+      return false;
+    };
 
     // 1) <a href>
     var as = document.querySelectorAll('a[href]');
     for (var i = 0; i < as.length; i++) {
       var a = as[i];
+      if (inClone(a)) continue;
       var h = a.getAttribute('href') || '';
       if (/^magnet:/i.test(h)) pushLink(arr, seen, h, 'magnet', a);
       else if (/^ed2k:/i.test(h)) pushLink(arr, seen, h, 'ed2k', a);
@@ -3189,6 +3629,7 @@
     for (var q = 0; q < attrs.length; q++) {
       var els = document.querySelectorAll('[' + attrs[q] + ']');
       for (var j = 0; j < els.length; j++) {
+        if (inClone(els[j])) continue;
         var v = els[j].getAttribute(attrs[q]) || '';
         if (/^magnet:/i.test(v)) pushLink(arr, seen, v, 'magnet', els[j]);
         else if (/^ed2k:/i.test(v)) pushLink(arr, seen, v, 'ed2k', els[j]);
@@ -3673,7 +4114,13 @@
 
   /* ---------------- 页面变化监听 ---------------- */
   function observe() {
-    var mo = new MutationObserver(function () { if (!applying) schedulePass(); });
+    // ⚠️ 判别式必须同时看 applying 和 backfilling：
+    //    补足的克隆是在 setTimeout 回调里插入的，那时 runPass 的 finally 早已把
+    //    applying 置回 false。若只看 applying，克隆插入 → 观察器触发 → schedulePass
+    //    → runPass 开头 clearClones() 把刚补的克隆全清掉 → 又判定 need>0 →
+    //    再次抓取 …… 死循环打站点，且用户永远看不到补足结果（实测现象：
+    //    fetch 计数持续上涨、.cf-cloned 恒为 0）。
+    var mo = new MutationObserver(function () { if (!applying && !backfilling) schedulePass(); });
     mo.observe(document.documentElement, { childList: true, subtree: true });
     setInterval(function () {
       if (location.href !== lastHref) {
@@ -3808,6 +4255,8 @@
     if (url) html += '<button data-cm="copyurl" data-v="' + escapeHtml(url) + '">复制链接</button>';
     if (code) {
       html += '<div class="sep"></div>';
+      html += '<button data-cm="shoppanel" data-v="' + escapeHtml(code) + '">多站比价（一键齐开 + 标记）</button>';
+      html += '<button data-cm="openall" data-v="' + escapeHtml(code) + '">在全部站点打开</button>';
       CODE_SITES.forEach(function (cs) {
         html += '<button data-cm="gosearch" data-v="' + escapeHtml(cs.tpl.replace('{q}', encodeURIComponent(code))) + '">在 ' + cs.n + ' 搜索</button>';
       });
@@ -3843,6 +4292,10 @@
         flashBall('已复制');
       } else if (cm === 'gosearch') {
         window.open(v, '_blank', 'noopener');
+      } else if (cm === 'shoppanel') {
+        showShopPanel(v);
+      } else if (cm === 'openall') {
+        openAllSites(v);
       }
     });
   }
@@ -3892,7 +4345,18 @@
 
       // 后台生成完今日推荐后刷新「📅 今日」页
       chrome.runtime.onMessage.addListener(function (msg) {
-        if (!msg || (msg.type !== 'sf_daily_updated' && msg.type !== 'sf_similar_updated')) return;
+        if (!msg) return;
+        // 设置页改了「屏蔽后显示方式」：立刻套用，不必刷新页面。
+        // 三档对应三组 class（.cf-blocked / .cf-placeholder / .cf-soft），
+        // 直接改 settings 后走一趟完整 pass —— 旧的 class 由 clearMarks/resetPassMarks 负责摘掉。
+        if (msg.type === 'sf-block-display-changed') {
+          if (msg.value) S.settings.blockDisplay = msg.value;
+          delete S.settings.softBlock;
+          syncToggles();
+          schedulePass();
+          return;
+        }
+        if (msg.type !== 'sf_daily_updated' && msg.type !== 'sf_similar_updated') return;
         cfGet(function (d) {
           S.dailyRecs = d.dailyRecs || {};
           S.recHistory = d.recHistory || [];

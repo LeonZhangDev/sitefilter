@@ -185,6 +185,8 @@ setTimeout(() => {
   // 番号多站直达（codeSearchBtns 默认开）
   check('番号行出现「多站直达」按钮组', list.querySelectorAll('.cf-gosrow .cf-gos').length >= 3);
   check('直达按钮含 javbus 站点', list.textContent.indexOf('Bus') !== -1 || list.textContent.indexOf('bus') !== -1);
+  // 多站比价（建议 ②）：番号收藏行有「比价」入口
+  check('番号收藏行有「比价」按钮', !!list.querySelector('.cf-dlrow [data-shop]'));
 
   // —— 下载链接探测 ——
   const dlRows = rowsOf('download');
@@ -443,12 +445,19 @@ setTimeout(() => {
         const day = new Date(); const key = day.getFullYear() + '-' + (day.getMonth() + 1) + '-' + day.getDate();
         check('statsLog 写入当天每日统计', !!log[key] && typeof log[key].blocked === 'number');
         console.log('      statsLog[' + key + ']:', JSON.stringify(log[key] || null));
-        // —— 软屏蔽开关已接入面板（行为细节见 _test_softblock.js） ——
-        // 说明：jsdom 对 Shadow DOM 内复选框的 .click() 激活语义不稳定（附加监听器后会失效），
-        // 因此这里只校验开关存在；软屏蔽的完整行为用独立、确定性的专项测试覆盖。
-        const cbSoft = sr.querySelector('input[data-cb="softBlock"]');
-        check('面板存在「软屏蔽」开关', !!cbSoft);
-        check('「软屏蔽」以通用 data-cb 机制接线（可被设置页/popup 同步）', !!cbSoft && cbSoft.dataset.cb === 'softBlock');
+        // —— 屏蔽后显示方式已接入面板（行为细节见 _test_softblock.js） ——
+        // v6 起 softBlock 由三档 blockDisplay 取代：面板里不再是复选框，
+        // 而是一枚 #bdBtn 循环按钮（隐藏 → 占位 → 灰化），设置页/popup 是下拉/循环。
+        // 说明：jsdom 对 Shadow DOM 内交互控件的 .click() 激活语义不稳定（附加监听器后会失效），
+        // 因此这里只校验控件存在与取值；完整行为用独立、确定性的专项测试覆盖。
+        const bdBtn = sr.querySelector('#bdBtn');
+        check('面板存在「屏蔽后显示方式」按钮', !!bdBtn);
+        // 本 fixture 是无 schemaVersion 的旧数据（等价 v1），会一路迁移到 v6。
+        // step 6 的语义是「尊重老用户既有行为」：softBlock 没勾过 → 'hide'，
+        // 所以这里期望「隐藏」而非新装默认的「占位」。新装默认值由 _test_options.js /
+        // _test_softblock.js 断言（它们直接读 DEFAULT_SETTINGS）。
+        check('面板按钮显示迁移后的档位（老数据未开软屏蔽 → 隐藏）',
+          !!bdBtn && bdBtn.textContent.indexOf('屏蔽后：隐藏') === 0);
 
         // —— 规则预览模式开关（行为细节见 _test_softblock.js 阶段三） ——
         const cbPreview = sr.querySelector('input[data-cb="previewMode"]');

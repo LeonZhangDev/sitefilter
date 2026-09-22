@@ -27,7 +27,20 @@ const store = {
     groups: [{ id: 'g1', name: '临时试试', enabled: false }],
     seen: { 'ABC-001': now },
     favCodes: { 'ABC-001': { t: '标题一', u: 'http://x/1', s: 'javbus', at: now }, 'ABC-002': { t: '标题二', u: '', s: 'javdb', at: now } },
-    discovered: { 'actress|新垣结衣': { v: '新垣结衣', type: 'actress', n: 3, first: now, last: now } },
+    // 发现库：影响面预演的演算数据源。刻意构造成：
+    //   - '三上悠亚' 命中 2 条（1 个精确 + 1 个带后缀），验证 contains 语义；
+    //   - '死标签' 命中 0 条（同类总量 2），验证「零命中」也能被算出来；
+    //   - '巨乳' / '巨乳系' 被多条规则同时命中，验证重叠统计。
+    discovered: {
+      'actress|新垣结衣': { v: '新垣结衣', type: 'actress', n: 3, first: now, last: now },
+      'actress|三上悠亚': { v: '三上悠亚', type: 'actress', n: 5, first: now, last: now },
+      'actress|三上悠亚(旧名)': { v: '三上悠亚(旧名)', type: 'actress', n: 1, first: now, last: now },
+      'actress|冲突女优a': { v: '冲突女优a', type: 'actress', n: 2, first: now, last: now },
+      'actress|冲突女优b': { v: '冲突女优b', type: 'actress', n: 1, first: now, last: now },
+      'tag|死标签': { v: '死标签x', type: 'tag', n: 1, first: now, last: now },
+      'tag|巨乳': { v: '巨乳', type: 'tag', n: 9, first: now, last: now },
+      'tag|巨乳系': { v: '巨乳系', type: 'tag', n: 4, first: now, last: now },
+    },
     statsLog: (function () { const o = {}; const d = new Date(); const k = d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); o[k] = { blocked: 7, fav: 2, hl: 1, dl: 0, at: now }; return o; })(),
     recSettings: { enabled: true, max: 12, newMax: 6, minQuality: 0, windowDays: 14, dim: ['actress'], weights: { rating: 0.4, works: 0.25, pop: 0.2, recency: 0.15 } },
     recHistory: [],
@@ -89,6 +102,14 @@ win.confirm = function () { return true; };
 win.prompt = function () { return ''; };
 win.URL.createObjectURL = function () { return 'blob:x'; };
 win.URL.revokeObjectURL = function () { };
+// jsdom 不支持 <a download> 触发下载，会打印 "Not implemented: navigation"。
+// 分项回滚在恢复前会主动调 exportPlain() 做保险备份 —— 那是预期行为，
+// 这里把 a.click() 静音，免得把真实失败淹在噪声里。
+const origClick = win.HTMLAnchorElement.prototype.click;
+win.HTMLAnchorElement.prototype.click = function () {
+  if (this.download) return;   // 下载型点击：吞掉
+  return origClick.apply(this, arguments);
+};
 
 let pass = true;
 const check = (name, cond) => { console.log((cond ? 'PASS  ' : 'FAIL  ') + name); if (!cond) pass = false; };
@@ -135,9 +156,12 @@ setTimeout(() => {
   check('每日推荐设置已回填（启用）', doc.querySelector('#recOn').checked === true);
   check('同步开关已回填', doc.querySelector('#syncOn').checked === false);
 
-  // —— 软屏蔽开关已进入通用设置（SWITCHES 渲染） ——
-  const swSoft = doc.querySelector('#switches input[data-k="softBlock"]');
-  check('通用设置出现「软屏蔽」开关', !!swSoft);
+  // —— 屏蔽后显示方式已进入设置页（v6：从 SWITCHES 复选框升级为 #bdSel 三档下拉） ——
+  const bdSel = doc.querySelector('#bdSel');
+  check('设置页存在「屏蔽后显示方式」下拉', !!bdSel);
+  check('下拉提供隐藏 / 占位 / 灰化三档',
+    !!bdSel && ['hide', 'placeholder', 'soft'].every(v => !!bdSel.querySelector('option[value="' + v + '"]')));
+  check('通用设置不再出现「软屏蔽」旧复选框', !doc.querySelector('#switches input[data-k="softBlock"]'));
   check('通用设置出现「规则预览」开关', !!doc.querySelector('#switches input[data-k="previewMode"]'));
 
   // —— 软屏蔽：放行时长控件 + 放行记录清单（可查看 / 撤销） ——
@@ -372,6 +396,46 @@ setTimeout(() => {
       return !!row && row.textContent.indexOf('精确') === -1;
     })());
 
+  // —— 影响面预演（建议 ④）——
+  check('影响面预演面板已渲染', !!doc.querySelector('#simBox'));
+  check('影响面预演有「开始预演」按钮与范围下拉',
+    !!doc.querySelector('#simRun') && !!doc.querySelector('#simScope'));
+  check('预演范围下拉提供三档',
+    ['all', 'block', 'enabled'].every(v => !!doc.querySelector('#simScope option[value="' + v + '"]')));
+  check('预演初始为未计算状态（不预先臆测）',
+    doc.querySelector('#simBox').querySelector('table') === null);
+  // 点「开始预演」后应算出明细
+  doc.querySelector('#simRun').click();
+  const simTxt = doc.querySelector('#simBox').textContent;
+  check('预演后渲染出明细表', !!doc.querySelector('#simBox table'));
+  // 夹具发现库：5 条 actress（新垣结衣 / 三上悠亚 / 三上悠亚(旧名) / 冲突女优a / 冲突女优b）
+  //             + 3 条 tag（死标签x / 巨乳 / 巨乳系）
+  check('预演总览显示发现库条数', /发现库\s*8\s*条/.test(simTxt));
+  check('预演按规则列出命中数', simTxt.indexOf('三上悠亚') !== -1);
+  // contains 语义：'三上悠亚' 命中 2 条 actress（精确那条 + 带后缀的 '三上悠亚(旧名)'）
+  check('预演按 contains 语义算命中（三上悠亚 → 2/5）',
+    (() => {
+      const rows = Array.from(doc.querySelectorAll('#simBox tbody tr'));
+      const r = rows.find(tr => tr.textContent.indexOf('三上悠亚') !== -1);
+      return !!r && /2\s*\/\s*5/.test(r.textContent);
+    })());
+  // 零命中也要显示出来（不是静默略过）
+  check('预演把「零命中」规则也列出来（tag 类 0/3）',
+    (() => {
+      const rows = Array.from(doc.querySelectorAll('#simBox tbody tr'));
+      return rows.some(tr => /0\s*\/\s*3\s*（0%）/.test(tr.textContent));
+    })());
+  // 重叠：冲突女优 同时被 block + favorite 两条规则命中 → 必须列出来
+  check('预演标出被多条规则同时命中的条目', simTxt.indexOf('重叠命中') !== -1);
+  // 番号/表达式类无法用发现库离线演算 → 必须显式说明，不能让用户以为"全部安全"
+  // 夹具里的 7 条规则都落在发现库覆盖的维度内，所以这里改用「只挑屏蔽类 + 断言已算」的反向验证：
+  // 确认预演确实没有把任何可算规则静默丢掉。
+  check('预演把可演算的规则全部列出（7 条）',
+    doc.querySelectorAll('#simBox tbody tr').length === 7);
+  // 预演是只读操作：不能碰规则（本文件此处已累积 7 条规则）
+  check('预演不修改任何规则',
+    store.sf_data_v1.rules.length === 7 && store.sf_data_v1.rules[0].enabled === true);
+
   // —— 候选规则（自动学习）——
   check('候选规则面板已渲染', !!doc.querySelector('#learnBox'));
   const learnTxt = doc.querySelector('#learnBox').textContent;
@@ -413,6 +477,22 @@ setTimeout(() => {
     doc.querySelector('#pane-settings').textContent.indexOf('PBKDF2') !== -1);
   check('导入按钮文案已更新为「明文或加密」',
     (doc.querySelector('#impBtn').textContent || '').indexOf('加密') !== -1);
+
+  // —— 备份快照留多份（建议 ⑤ 前半）——
+  check('自动备份卡片有「快照轮换」下拉', !!doc.querySelector('#backupKeep'));
+  check('轮换下拉提供 1/7/30/不轮换 四档',
+    ['1', '7', '30', '0'].every(v => !!doc.querySelector('#backupKeep option[value="' + v + '"]')));
+  check('轮换下拉默认回填 7 份', doc.querySelector('#backupKeep').value === '7');
+  check('备份提示文案已说明「文件名含时分秒」（不再一天一份）',
+    doc.querySelector('#pane-settings').textContent.indexOf('时分秒') !== -1);
+
+  // —— 分项回滚（建议 ⑤ 后半）——
+  check('分项回滚卡片有选文件按钮与隐藏 file input',
+    !!doc.querySelector('#partialPick') && !!doc.querySelector('#partialFile'));
+  check('未选文件时给出说明（不预先臆测）',
+    doc.querySelector('#partialBox').textContent.indexOf('默认全部不勾选') !== -1);
+  check('分项回滚提示「恢复前会自动先导出」',
+    doc.querySelector('#partialBox').textContent.indexOf('自动') !== -1);
 
   // —— 临时规则有效期：规则表新增「有效期」列 ——
   check('规则表表头含「有效期」列', doc.querySelector('#ruleTable thead').textContent.indexOf('有效期') !== -1);
@@ -482,8 +562,63 @@ setTimeout(() => {
           setTimeout(() => {
             check('撤销后 ABC-666 从 peeks 移除', !(store.sf_data_v1.peeks || {})['ABC-666']);
             check('撤销后 ABC-555 仍在 peeks（未被连带清掉）', !!(store.sf_data_v1.peeks || {})['ABC-555']);
-            console.log(pass ? '\n设置页测试全部通过 ✅' : '\n存在失败 ❌');
-            process.exit(pass ? 0 : 1);
+
+            /* ===== 分项回滚：真的能只恢复「规则」而不动收藏 =====
+               走完整 UI 路径：伪造 FileReader → 选中 #partialFile → 渲染出区块表
+               → 只勾「规则库」→ 点恢复 → 断言规则变了、收藏 / 已看原样。 */
+            const BK = {
+              schemaVersion: 6,
+              rules: [{ id: 'rb1', type: 'actress', value: '从备份恢复的女优', action: 'block', match: 'contains', scope: 'actress', enabled: true, hits: 0, createdAt: now }],
+              groups: [{ id: 'gb1', name: '备份分组', enabled: true }],
+              seen: { 'FROM_BACKUP': 123 },
+              favCodes: { 'ZZZ-999': { t: '备份收藏', u: '', s: 'javbus', at: now } },
+            };
+            const favBefore = JSON.stringify(store.sf_data_v1.favCodes || {});
+            const seenBefore = JSON.stringify(store.sf_data_v1.seen || {});
+            const rulesCountBefore = (store.sf_data_v1.rules || []).length;
+
+            win.FileReader = function () {
+              this.readAsText = () => { this.result = JSON.stringify(BK); this.onload && this.onload(); };
+            };
+            const pf = doc.querySelector('#partialFile');
+            Object.defineProperty(pf, 'files', { value: [{ name: 'backup-test.json' }], configurable: true });
+            pf.dispatchEvent(new win.Event('change', { bubbles: true }));
+
+            setTimeout(() => {
+              check('选择备份后渲染出区块表', !!doc.querySelector('#partialBox table'));
+              check('区块表列出「规则库」', doc.querySelector('#partialBox').textContent.indexOf('规则库') !== -1);
+              const secs = doc.querySelectorAll('#partialBox .prSec');
+              check('所有区块默认不勾选（防误操作）',
+                secs.length > 0 && Array.prototype.every.call(secs, c => c.checked === false));
+              check('备份里没有的区块被标注「无法恢复」',
+                doc.querySelector('#partialBox').textContent.indexOf('无法恢复') !== -1);
+
+              // 只勾「规则库」
+              const rulesCb = Array.prototype.find.call(secs, c => c.value === 'rules');
+              check('找到「规则库」勾选框', !!rulesCb);
+              if (rulesCb) rulesCb.checked = true;
+              const applyBtn = doc.querySelector('#prApply');
+              check('有「恢复勾选的区块」按钮', !!applyBtn);
+              if (applyBtn) applyBtn.click();
+
+              setTimeout(() => {
+                const rulesAfter = store.sf_data_v1.rules || [];
+                check('分项恢复：规则确实被替换成备份里的内容',
+                  rulesAfter.length === BK.rules.length &&
+                  rulesAfter[0] && rulesAfter[0].value === '从备份恢复的女优');
+                check('分项恢复：规则数从 ' + rulesCountBefore + ' 变为备份里的 ' + BK.rules.length,
+                  rulesAfter.length !== rulesCountBefore);
+                check('分项恢复：未勾选的收藏原样未动（' + favBefore + '）',
+                  JSON.stringify(store.sf_data_v1.favCodes || {}) === favBefore);
+                check('分项恢复：未勾选的已看记录原样未动',
+                  JSON.stringify(store.sf_data_v1.seen || {}) === seenBefore);
+                check('分项恢复：未勾选的分组原样未动',
+                  !(store.sf_data_v1.groups || []).some(g => g && g.id === 'gb1'));
+
+                console.log(pass ? '\n设置页测试全部通过 ✅' : '\n存在失败 ❌');
+                process.exit(pass ? 0 : 1);
+              }, 250);
+            }, 150);
           }, 150);
         }, 150);
       }, 200);

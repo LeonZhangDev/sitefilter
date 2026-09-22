@@ -25,10 +25,11 @@ document.addEventListener('DOMContentLoaded', function () {
     d.sites = d.sites || [];
     d.rules = d.rules || [];
 
-    // 开关
+    // 开关（.tg 里既有复选框也有纯文本按钮，只挑带 input 的）
     document.querySelectorAll('.tg').forEach(function (el) {
       var k = el.dataset.k;
       var cb = el.querySelector('input');
+      if (!k || !cb) return;   // 三档循环按钮等无 input 的标签跳过
       cb.checked = d.settings[k] !== false && !!d.settings[k];
       el.classList.toggle('on', cb.checked);
       el.addEventListener('click', function () {
@@ -37,6 +38,25 @@ document.addEventListener('DOMContentLoaded', function () {
         d.settings[k] = cb.checked;
         set(d);
       });
+    });
+
+    /* 屏蔽后显示方式：三档循环。顺序与 content.js 面板一致（看得见的程度递增） */
+    var BD_ORDER = ['hide', 'placeholder', 'soft'];
+    var BD_LABEL = { hide: '隐藏', placeholder: '占位', soft: '灰化' };
+    var bdEl = document.getElementById('bdCycle');
+    function syncBd() {
+      var v = BD_ORDER.indexOf(d.settings.blockDisplay) === -1 ? 'placeholder' : d.settings.blockDisplay;
+      bdEl.textContent = '屏蔽后：' + BD_LABEL[v];
+      // 只有「灰化」会露出遮罩，其余两档都算"完全处理掉"，按钮高亮沿用旧 checkbox 的语义
+      bdEl.classList.toggle('on', v !== 'hide');
+    }
+    syncBd();
+    bdEl.addEventListener('click', function () {
+      var cur = BD_ORDER.indexOf(d.settings.blockDisplay) === -1 ? 'placeholder' : d.settings.blockDisplay;
+      d.settings.blockDisplay = BD_ORDER[(BD_ORDER.indexOf(cur) + 1) % BD_ORDER.length];
+      delete d.settings.softBlock;   // 顺手清掉废弃字段，避免两份真相并存
+      syncBd();
+      set(d);
     });
 
     chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {

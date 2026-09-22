@@ -165,13 +165,16 @@ check('options.js 的 TPL_SELECTORS 与 content.js 的 SELECTOR_TEMPLATES 一致
 check('TPL_SELECTORS 含三个新站的模板',
   ['pornhub', 'youporn', 'xsijishe'].every(k => O.TPL_SELECTORS.some(t => t.test === k)));
 
-/* ============ ⑥ 三处版本号与迁移步（与 _test_migrate 的守卫互补：这里只管 v5） ============ */
+/* ============ ⑥ 三处版本号与迁移步（与 _test_migrate 的守卫互补：这里只管 v5 / v6） ============ */
 const vOf = f => { const m = SRC[f].match(/var SCHEMA_VERSION = (\d+);/); return m ? Number(m[1]) : NaN; };
-check('三处 SCHEMA_VERSION 都是 5',
-  vOf('content') === 5 && vOf('background') === 5 && vOf('options') === 5);
-['content', 'background', 'options'].forEach(f => {
-  check(f + '.js 的 migrate 里有 step 5',
-    new RegExp('(^|[^0-9])5:\\s*function\\s*\\(').test(SRC[f]));
+check('三处 SCHEMA_VERSION 都是 6',
+  vOf('content') === 6 && vOf('background') === 6 && vOf('options') === 6);
+// v5：站点模板化（本站测试的主角）；v6：屏蔽三档 blockDisplay
+[[5, '站点模板化'], [6, '屏蔽三档 blockDisplay']].forEach(([v, why]) => {
+  ['content', 'background', 'options'].forEach(f => {
+    check(f + '.js 的 migrate 里有 step ' + v + '（' + why + '）',
+      new RegExp('(^|[^0-9])' + v + ':\\s*function\\s*\\(').test(SRC[f]));
+  });
 });
 
 /* ============ ⑦ 迁移行为：老用户（v4）能拿到新增站点 ============ */

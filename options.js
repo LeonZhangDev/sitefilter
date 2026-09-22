@@ -1,6 +1,6 @@
 'use strict';
 var DATA_KEY = 'sf_data_v1';
-var SCHEMA_VERSION = 5;   // 与 content.js / background.js 保持一致
+var SCHEMA_VERSION = 6;   // 与 content.js / background.js 保持一致
 
 /* ---------------- 错误日志（与 content/background 共用同一份 errLog） ---------------- */
 var ERR_MAX = 200;
@@ -21,6 +21,9 @@ var DEFAULT_SETTINGS = {
   enabled: true, sfw: false, onlyFav: false, onlyFavCode: false, boss: false,
   showBall: true, pinHighlight: true, markSeen: true, favBtn: true,
   watchBtn: true, showWhy: true, softBlock: false, autoBackup: false,
+  backupKeep: 7,               // 自动备份快照轮换份数：0 = 不轮换（无限累积）
+  backfill: 'off',             // 番号站数量补足：'off' / 'same' / 正整数（唯一会联网的开关）
+  blockDisplay: 'placeholder', // 屏蔽后显示方式：'hide' 完全隐藏 / 'placeholder' 保留占位（默认）/ 'soft' 灰化遮罩
   probeLinks: true, probeMark: true, probeAnySite: true,
   hlColor: '#00e5ff', ball: { right: 24, bottom: 24 },
   ballLock: false,     // 锁定悬浮球位置（锁定后拖不动）
@@ -37,7 +40,7 @@ var SWITCHES = [
   ['ballLock', '锁定悬浮球位置（锁定后拖不动，点击仍可开合面板）'],
   ['pinHighlight', '高亮卡片置顶'], ['markSeen', '标记已看'], ['favBtn', '卡片 ♥ 收藏按钮'],
   ['watchBtn', '卡片 ⏳ 待看按钮'], ['showWhy', '悬停显示「为什么被处理」浮层'],
-  ['softBlock', '软屏蔽（灰化模糊 + 「仍然查看」临时放行）'],
+  // 注意：softBlock 已并入下面的 SELECTS（三档「屏蔽后显示方式」），别再加回这里
   ['previewMode', '规则预览（不真正隐藏，只描边提示「将会被屏蔽」）'],
   ['firstMatchWins', '规则按顺序、首个命中生效（关闭则屏蔽 > 收藏 > 高亮）'],
   ['codeSearchBtns', '番号处显示多站直达（Bus / DB / 580 / XC）'],
@@ -128,6 +131,17 @@ function migrate(d) {
         if (have[s.id]) return;
         x.sites.push({ id: s.id, pattern: s.pattern, enabled: true, selector: '', note: s.note });
       });
+    },
+    // v5 → v6：屏蔽显示方式从二元开关 softBlock 升级为三档 blockDisplay。
+    // 必须与 content.js / background.js 的 step 6 逐字一致 —— 三份迁移结果不同
+    // 会让同一份数据在不同入口被解读成两种行为。迁移尊重老用户既有行为：
+    // 勾过软屏蔽 → 'soft'，没勾的 → 'hide'；'placeholder' 只是全新安装的默认。
+    6: function (x) {
+      x.settings = x.settings || {};
+      if (!x.settings.blockDisplay) {
+        x.settings.blockDisplay = x.settings.softBlock ? 'soft' : 'hide';
+      }
+      delete x.settings.softBlock;
     }
   };
   for (var v = from + 1; v <= SCHEMA_VERSION; v++) {
@@ -190,6 +204,7 @@ function get() {
       D.similarRecs = d.similarRecs || {};
       D.recFeedbackDaily = d.recFeedbackDaily || {};
       D.peeks = d.peeks || {};
+      D.shopMarks = d.shopMarks || {};
       D.errLog = d.errLog || [];
       D.learned = d.learned || {};
       D.dismissedLearn = d.dismissedLearn || {};
@@ -569,6 +584,58 @@ function renderSwitches() {
   });
 }
 
+/* 屏蔽后显示方式：三档下拉。
+   与 content.js 面板里的 cycleBd 按钮是同一份设置的两种入口，
+   取值必须落在 BD_VALUES 内（content.js 的 BD_ORDER 顺序不同，那只是面板轮换顺序）。 */
+var BD_VALUES = ['hide', 'placeholder', 'soft'];
+function renderBdSel() {
+  var sel = document.getElementById('bdSel');
+  if (!sel) return;
+  var cur = D.settings.blockDisplay;
+  if (BD_VALUES.indexOf(cur) === -1) cur = 'placeholder';  // 老数据 / 脏值兜底
+  sel.value = cur;
+  sel.addEventListener('change', function () {
+    if (BD_VALUES.indexOf(sel.value) === -1) return;
+    D.settings.blockDisplay = sel.value;
+    save().then(notifyBdChange);
+  });
+}
+// 通知已打开的页面立即套用（没有 content script 的标签页会报 lastError，静默吞掉）
+function notifyBdChange() {
+  var v = D.settings.blockDisplay;
+  try {
+    chrome.tabs.query({}, function (tabs) {
+      (tabs || []).forEach(function (t) {
+        if (!t || !t.id) return;
+        chrome.tabs.sendMessage(t.id, { type: 'sf-block-display-changed', value: v }, function () {
+          void chrome.runtime.lastError;
+        });
+      });
+    });
+  } catch (e) { }
+}
+
+/* 番号站数量补足（需求 002 L2）。取值口径与 content.js 的 backfillTarget() 一致：
+   'off' / 'same' / 正整数。这是全库唯一会联网的开关，默认 off。 */
+var BF_VALUES = ['off', 'same', '6', '12', '24'];
+function renderBfSel() {
+  var sel = document.getElementById('bfSel');
+  if (!sel) return;
+  var cur = String(D.settings.backfill == null ? 'off' : D.settings.backfill);
+  sel.value = (BF_VALUES.indexOf(cur) !== -1) ? cur : 'off';
+  sel.addEventListener('change', function () {
+    if (BF_VALUES.indexOf(sel.value) === -1) return;
+    D.settings.backfill = sel.value;
+    save().then(function () {
+      if (sel.value !== 'off') {
+        // 开这个开关等于允许联网，值得明确告知一次（而不是静默生效）
+        var tip = document.getElementById('bfNote');
+        if (tip) tip.textContent = '已开启。下次刷新番号站页面时会去下一页抓卡片填满空位。';
+      }
+    });
+  });
+}
+
 function renderDots(targetId, current, onPick) {
   var box = document.getElementById(targetId);
   box.innerHTML = COLORS.map(function (c) {
@@ -710,6 +777,7 @@ function applyImport(obj) {
     D.similarRecs = Object.assign({}, D.similarRecs || {}, obj.similarRecs || {});
     D.recFeedbackDaily = Object.assign({}, D.recFeedbackDaily || {}, obj.recFeedbackDaily || {});
     D.peeks = Object.assign({}, D.peeks || {}, obj.peeks || {});
+    D.shopMarks = Object.assign({}, D.shopMarks || {}, obj.shopMarks || {});
     D.dismissedLearn = Object.assign({}, D.dismissedLearn || {}, obj.dismissedLearn || {});
     D.expiredLog = (obj.expiredLog || []).concat(D.expiredLog || []).slice(-200);
     D.profiles = (obj.profiles || []).concat(D.profiles || []).filter(function (p, i, a) {
@@ -723,7 +791,7 @@ function applyImport(obj) {
       discovered: obj.discovered || {}, groups: obj.groups || [], statsLog: obj.statsLog || {},
       recSettings: obj.recSettings || {}, recHistory: obj.recHistory || [], dailyRecs: obj.dailyRecs || {}, recFeedback: obj.recFeedback || {},
       watchlist: obj.watchlist || {}, cooc: obj.cooc || {}, similarRecs: obj.similarRecs || {}, recFeedbackDaily: obj.recFeedbackDaily || {},
-      peeks: obj.peeks || {}, errLog: obj.errLog || [],
+      peeks: obj.peeks || {}, errLog: obj.errLog || [], shopMarks: obj.shopMarks || {},
       learned: obj.learned || {}, dismissedLearn: obj.dismissedLearn || {},
       profiles: obj.profiles || [], activeProfile: obj.activeProfile || '', expiredLog: obj.expiredLog || [],
       schemaVersion: obj.schemaVersion || SCHEMA_VERSION
@@ -1761,27 +1829,203 @@ document.getElementById('tplAll').addEventListener('click', function () {
 function renderBackup() {
   var cb = document.getElementById('autoBackupOn');
   if (cb) cb.checked = !!(D.settings && D.settings.autoBackup);
+  var sel = document.getElementById('backupKeep');
+  if (sel) {
+    var k = Number(D.settings && D.settings.backupKeep);
+    if (isNaN(k)) k = 7;
+    // 选项表里只有 0/1/7/30，历史脏值（比如手改成 3）就贴到最近的档上，避免下拉显示空白
+    sel.value = String([0, 1, 7, 30].indexOf(k) !== -1 ? k : 7);
+  }
+  updateBackupTip();
+}
+function updateBackupTip() {
+  var el = document.getElementById('backupTip');
+  if (!el) return;
+  var on = !!(D.settings && D.settings.autoBackup);
+  var k = Number(D.settings && D.settings.backupKeep);
+  if (isNaN(k)) k = 7;
+  var keepTxt = k > 0 ? ('自动备份在下载目录最多保留 ' + k + ' 份，更早的会自动清掉') : '自动备份不轮换，会一直累积（需自己清理）';
+  el.textContent = on
+    ? ('已开启。扩展每天会在后台写一份 JSON 到「下载/sitefilter-backup/」，文件名含时分秒；' + keepTxt + '。')
+    : ('已关闭自动备份。仍可用上方「导出 JSON 备份」手动保存。' + keepTxt + '（该设置在你重新开启后生效。）');
 }
 document.getElementById('autoBackupOn').addEventListener('change', function () {
   D.settings.autoBackup = this.checked;
-  save().then(function () {
-    document.getElementById('backupTip').textContent = this.checked
-      ? '已开启。扩展每天会在后台写一份 JSON 到「下载/sitefilter-backup/」，同名覆盖。'
-      : '已关闭自动备份。仍可用上方「导出 JSON 备份」手动保存。';
-  }.bind(this));
+  save().then(function () { updateBackupTip(); });
 });
+(function () {
+  var sel = document.getElementById('backupKeep');
+  if (!sel) return;
+  sel.addEventListener('change', function () {
+    D.settings.backupKeep = Number(sel.value) || 0;
+    save().then(function () { updateBackupTip(); });
+  });
+})();
 document.getElementById('backupNow').addEventListener('click', function () {
   try {
     var json = JSON.stringify(D);
     var blob = new Blob([json], { type: 'application/json' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'sitefilter-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+    // 手动备份也带时分秒，避免同一天多次点「立即备份」互相覆盖
+    var now = new Date();
+    var p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+    var stamp = now.toISOString().slice(0, 10) + '_' + p2(now.getHours()) + p2(now.getMinutes()) + p2(now.getSeconds());
+    a.download = 'sitefilter-backup-' + stamp + '.json';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 3000);
-    document.getElementById('backupTip').textContent = '已导出备份：sitefilter-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.getElementById('backupTip').textContent = '已导出备份：sitefilter-backup-' + stamp + '.json';
   } catch (e) { alert('备份失败：' + e.message); }
 });
+
+/* =====================================================================
+ * 分项回滚（建议 ⑤ 的后半）
+ * 需求场景：只想把「规则」退回两天前的样子，但不想把收藏 / 已看 / 发现库一起退回
+ * （那些是这段时间新攒的，整体回滚等于白攒）。所以这里让用户按区块勾选恢复。
+ * 安全设计：① 恢复前先导出一份当前状态（自动、免确认）② 勾选项默认全不勾
+ *         ③ 危险区块（清空型）单独标注 ④ 恢复后立刻 re-migrate 保证结构对齐
+ * ===================================================================== */
+
+// 可回滚的区块：键 → { label, kind, apply(cur, inc) }
+//   kind: 'replace' 整体替换 / 'merge' 按 key 合并 / 'append' 追加去重
+var RESTORE_SECTIONS = [
+  { key: 'rules', label: '规则库', kind: 'replace', desc: '整份规则列表（含启停状态、有效期）' },
+  { key: 'groups', label: '规则分组', kind: 'replace', desc: '分组定义与启停' },
+  { key: 'sites', label: '监管站点', kind: 'replace', desc: '监管站点列表与自定义选择器' },
+  { key: 'settings', label: '设置项', kind: 'merge', desc: '各种开关；只覆盖备份里存在的键' },
+  { key: 'seen', label: '已看记录', kind: 'merge', desc: '按番号合并，备份里的会覆盖同名项' },
+  { key: 'favCodes', label: '番号收藏', kind: 'merge', desc: '按番号合并' },
+  { key: 'watchlist', label: '待看清单', kind: 'merge', desc: '按番号合并' },
+  { key: 'discovered', label: '发现库', kind: 'merge', desc: '按条目合并 —— 数量大，通常不必回滚' },
+  { key: 'peeks', label: '临时放行记录', kind: 'merge', desc: '软屏蔽的「仍然查看」放行时间戳' },
+  { key: 'profiles', label: '场景档位', kind: 'replace', desc: '档位快照列表' },
+];
+
+var partialData = null;   // 已解析的备份对象
+
+function applyRestoreSection(sec, backup, target) {
+  var inc = backup[sec.key];
+  if (inc == null) return false;
+  if (sec.kind === 'replace') {
+    target[sec.key] = JSON.parse(JSON.stringify(inc));
+  } else if (sec.kind === 'merge') {
+    target[sec.key] = Object.assign({}, target[sec.key] || {}, JSON.parse(JSON.stringify(inc)));
+  } else {
+    target[sec.key] = (target[sec.key] || []).concat(JSON.parse(JSON.stringify(inc)));
+  }
+  return true;
+}
+
+function renderPartial() {
+  var box = document.getElementById('partialBox');
+  var nameEl = document.getElementById('partialName');
+  if (!box) return;
+  if (!partialData) {
+    if (nameEl) nameEl.textContent = '未选择文件';
+    box.innerHTML = '<div class="empty">选一个备份文件后，这里会列出可以单独恢复的区块 —— ' +
+      '默认全部不勾选，请按需要勾。恢复前会自动先导出当前状态做保险。</div>';
+    return;
+  }
+  if (nameEl) nameEl.textContent = partialData.__name || '已选择';
+
+  // 备份里实际存在的区块才列出来（免得勾了个空的还以为恢复了）
+  var avail = RESTORE_SECTIONS.filter(function (s) { return partialData[s.key] != null; });
+  var missing = RESTORE_SECTIONS.filter(function (s) { return partialData[s.key] == null; });
+
+  var bsv = partialData.schemaVersion;
+  var html = '<div class="tip" style="margin-top:0">备份里的数据结构版本：<b>v' + esc(String(bsv || '未知')) +
+    '</b>（当前 v' + SCHEMA_VERSION + '）' +
+    (bsv && Number(bsv) > SCHEMA_VERSION ? ' —— <span style="color:#ffb3c1">来自更高版本，恢复后可能有不兼容字段</span>' : '') +
+    '</div>';
+  html += '<table><thead><tr><th style="width:30px"></th><th style="width:110px">区块</th>' +
+    '<th style="width:190px">备份里有多少</th><th>说明</th></tr></thead><tbody>';
+  avail.forEach(function (s) {
+    var v = partialData[s.key];
+    var cnt = Array.isArray(v) ? (v.length + ' 条') : (typeof v === 'object' ? (Object.keys(v).length + ' 个键') : '—');
+    html += '<tr><td><input type="checkbox" class="prSec" value="' + esc(s.key) + '"></td>' +
+      '<td><b>' + esc(s.label) + '</b></td><td><span class="alias">' + esc(cnt) + '</span></td>' +
+      '<td><span class="alias">' + esc(s.desc) + '</span></td></tr>';
+  });
+  html += '</tbody></table>';
+  if (missing.length) {
+    html += '<div class="tip">备份里没有这些区块，无法恢复：' +
+      missing.map(function (s) { return esc(s.label); }).join('、') + '</div>';
+  }
+  html += '<div class="grid" style="margin-top:8px">' +
+    '<button class="primary" id="prApply">恢复勾选的区块</button>' +
+    '<button id="prAll">全选</button><button id="prNone">全不选</button>' +
+    '<span style="flex:1"></span>' +
+    '<button class="danger" id="prClear">丢弃这个文件</button></div>';
+  box.innerHTML = html;
+
+  var all = function (v) {
+    Array.prototype.forEach.call(box.querySelectorAll('.prSec'), function (c) { c.checked = v; });
+  };
+  var q = function (id) { return document.getElementById(id); };
+  if (q('prAll')) q('prAll').addEventListener('click', function () { all(true); });
+  if (q('prNone')) q('prNone').addEventListener('click', function () { all(false); });
+  if (q('prClear')) q('prClear').addEventListener('click', function () {
+    partialData = null; renderPartial();
+  });
+  if (q('prApply')) q('prApply').addEventListener('click', function () {
+    var picked = Array.prototype.filter.call(box.querySelectorAll('.prSec'), function (c) { return c.checked; })
+      .map(function (c) { return c.value; });
+    if (!picked.length) { alert('先勾选要恢复的区块。'); return; }
+    var labels = picked.map(function (k) {
+      var s = RESTORE_SECTIONS.filter(function (x) { return x.key === k; })[0];
+      return s ? s.label : k;
+    });
+    if (!confirm('将从备份恢复以下区块：\n\n  ' + labels.join('、') +
+      '\n\n未勾选的区块保持现状不变。\n恢复前会自动先导出当前状态作为保险。\n\n确定继续？')) return;
+
+    // 保险：先把当前全量导出（复用导出按钮的路径，但不弹加密询问）
+    try { exportPlain(); } catch (e) { }
+    pushUndo();
+
+    var n = 0;
+    picked.forEach(function (k) {
+      var sec = RESTORE_SECTIONS.filter(function (x) { return x.key === k; })[0];
+      if (sec && applyRestoreSection(sec, partialData, D)) n++;
+    });
+    // 恢复完再 migrate 一次：备份可能是旧结构，补齐缺字段（不改变已恢复的值）
+    D = migrate(D);
+    save().then(function () {
+      renderAll();
+      var tip = document.getElementById('partialName');
+      if (tip) tip.textContent = '已恢复 ' + n + ' 个区块';
+      alert('恢复完成：' + labels.join('、') + '\n\n（已自动导出一份恢复前的完整备份）');
+    });
+  });
+}
+
+(function initPartial() {
+  var btn = document.getElementById('partialPick');
+  var file = document.getElementById('partialFile');
+  if (!btn || !file) return;
+  btn.addEventListener('click', function () { file.click(); });
+  file.addEventListener('change', function () {
+    var f = file.files && file.files[0];
+    if (!f) return;
+    var fr = new FileReader();
+    fr.onload = function () {
+      try {
+        var obj = JSON.parse(String(fr.result));
+        if (isEncryptedBackup(obj)) {
+          alert('这是一份加密备份 —— 分项回滚暂时只支持明文 JSON。\n请先用原密码解密后再操作（或改用「导入备份」整体导入）。');
+          file.value = ''; return;
+        }
+        if (!obj || typeof obj !== 'object') throw new Error('不是对象');
+        obj.__name = f.name;
+        partialData = obj;
+        renderPartial();
+      } catch (e) {
+        alert('读取失败：不是有效的 JSON 备份文件。（' + (e && e.message ? e.message : e) + '）');
+      }
+      file.value = '';
+    };
+    fr.readAsText(f);
+  });
+})();
 
 /* ---------------- 错误日志 ---------------- */
 function renderErrLog() {
@@ -2237,6 +2481,161 @@ function renderAudit() {
   });
 }
 
+/* =====================================================================
+ * 影响面预演（需求 003 建议④）
+ * 目的：在「改规则之前」就看清会挡掉谁，而不是改完刷新页面才发现挡多了。
+ * 与规则体检的分工：
+ *   - 规则体检（renderAudit）：事后找问题 —— 长期 0 命中 / 已经过宽。
+ *   - 影响面预演（本函数）：事前算口径 —— 每条规则各命中多少、彼此重叠多少、
+ *     哪些条目会被多条规则同时命中（重叠 = 排查误杀的线索）。
+ * 数据源只有本机的发现库（D.discovered），不发任何网络请求。
+ * ===================================================================== */
+
+// 单条规则在发现库里的命中集合（返回命中的 key 数组 + 该类型总量）
+function simHits(r, disc) {
+  var t = r.type, out = { keys: [], total: 0 };
+  if (t === 'expr') return { keys: [], total: 0, skip: '表达式规则无法用发现库离线演算' };
+  if (t === 'code' || t === 'keyword') {
+    // 番号/标题词：发现库里没有对应的条目维度（发现库只存 女优/标签/片商/系列/导演）
+    return { keys: [], total: 0, skip: '发现库不含该维度数据' };
+  }
+  var v = String(r.value || '').toLowerCase().trim();
+  if (!v) return { keys: [], total: 0, skip: '规则没有主体词' };
+  var aliases = (r.aliases || []).map(function (a) { return String(a || '').toLowerCase().trim(); })
+    .filter(function (a) { return a; });
+  var needles = [v].concat(aliases);
+  Object.keys(disc).forEach(function (k) {
+    var it = disc[k] || {};
+    if ((it.type || '') !== t) return;
+    out.total++;
+    var hay = String(it.v || '').toLowerCase();
+    // match 语义与 content.js 保持一致：contains 子串 / exact 全等 / regex 正则
+    var hit = false;
+    if (r.match === 'exact') hit = needles.indexOf(hay) !== -1;
+    else if (r.match === 'regex') {
+      try { var re = new RegExp(v); hit = re.test(String(it.v || '')); } catch (e) { hit = false; }
+    } else hit = needles.some(function (n) { return hay.indexOf(n) !== -1; });
+    if (hit) out.keys.push(k);
+  });
+  return out;
+}
+
+var SIM_ACTION_LABEL = { block: '屏蔽', favorite: '收藏', highlight: '高亮', hide: '隐藏' };
+
+function runSim() {
+  var box = document.getElementById('simBox');
+  var sel = document.getElementById('simScope');
+  if (!box) return;
+  var scope = (sel && sel.value) || 'all';
+  var disc = D.discovered || {};
+  var discN = Object.keys(disc).length;
+  if (!discN) {
+    box.innerHTML = '<div class="empty">发现库还是空的 —— 先在监管站点正常浏览几页，扩展会自动积累你刷到的女优 / 标签 / 片商，' +
+      '再回来预演就能看到真实的影响面。</div>';
+    return;
+  }
+
+  var rules = (D.rules || []).filter(function (r) {
+    if (scope === 'block') return r.action === 'block';
+    if (scope === 'enabled') return r.enabled !== false;
+    return true;
+  });
+  if (!rules.length) {
+    box.innerHTML = '<div class="empty">当前范围内没有规则可预演。</div>';
+    return;
+  }
+
+  // 逐条算命中，同时统计「被几条规则同时命中」用于识别重叠
+  var rows = [];
+  var hitCount = {};      // discKey → 被多少条规则命中
+  var skipped = [];
+  rules.forEach(function (r) {
+    var h = simHits(r, disc);
+    if (h.skip) { skipped.push({ r: r, why: h.skip }); return; }
+    h.keys.forEach(function (k) { hitCount[k] = (hitCount[k] || 0) + 1; });
+    rows.push({
+      r: r, n: h.keys.length, total: h.total,
+      ratio: h.total ? h.keys.length / h.total : 0,
+      samples: h.keys.slice(0, 5).map(function (k) { return (disc[k] || {}).v || k; }),
+    });
+  });
+  rows.sort(function (a, b) { return b.n - a.n; });
+
+  // 重叠条目：被 ≥2 条规则命中 —— 误杀排查时最先该看的地方
+  var overlapped = Object.keys(hitCount).filter(function (k) { return hitCount[k] >= 2; });
+  // 重叠条目里按类型取样
+  var ovSamples = overlapped.slice(0, 8).map(function (k) {
+    return ((disc[k] || {}).v || k) + ' ×' + hitCount[k];
+  });
+
+  var blockedTotal = Object.keys(hitCount).length;
+  var heavy = rows.filter(function (x) { return x.n >= 8 && x.ratio >= 0.5; });
+
+  var html = '';
+  // —— 总览 ——
+  html += '<div class="grid" style="margin-bottom:10px">' +
+    '<span class="chip" style="background:rgba(0,229,255,.16);color:#9beaff">发现库 ' + discN + ' 条</span>' +
+    '<span class="chip" style="background:rgba(255,77,109,.16);color:#ffb3c1">预演规则 ' + rows.length + ' 条</span>' +
+    '<span class="chip" style="background:rgba(255,201,60,.16);color:#ffe08a">会被命中 ' + blockedTotal + ' 条</span>' +
+    (overlapped.length ? '<span class="chip" style="background:rgba(124,92,255,.18);color:#c9bcff">重叠命中 ' + overlapped.length + ' 条</span>' : '') +
+    '</div>';
+
+  if (heavy.length) {
+    html += '<div class="tip" style="border-left:3px solid #ff4d6d;padding-left:8px">' +
+      '⚠ 有 <b>' + heavy.length + '</b> 条规则命中面偏大（同类条目里有 ≥50% 都会被打中），' +
+      '建议先确认是不是「高清」这类通用词。</div>';
+  }
+
+  // —— 明细表 ——
+  html += '<table><thead><tr><th style="width:150px">规则</th><th style="width:66px">动作</th>' +
+    '<th style="width:140px">命中 / 同类总量</th><th>命中样例</th></tr></thead><tbody>';
+  rows.forEach(function (x) {
+    var pct = Math.round(x.ratio * 100);
+    var col = x.n === 0 ? 'color:#888'
+      : (x.ratio >= 0.5 ? 'color:#ffb3c1' : 'color:#7ee0a5');
+    html += '<tr>' +
+      '<td><span class="val">' + esc(x.r.value || '（纯表达式）') + '</span>' +
+      (x.r.enabled === false ? ' <span class="chip" style="background:rgba(255,255,255,.08);color:#999">已关</span>' : '') +
+      '</td>' +
+      '<td><span class="chip type">' + esc(SIM_ACTION_LABEL[x.r.action] || x.r.action || '—') + '</span></td>' +
+      '<td><span style="' + col + '">' + x.n + ' / ' + x.total + '（' + pct + '%）</span></td>' +
+      '<td><span class="alias">' + esc(x.samples.join(' · ') || '—') + '</span></td></tr>';
+  });
+  html += '</tbody></table>';
+
+  // —— 重叠清单 ——
+  if (overlapped.length) {
+    html += '<div class="tip" style="margin-top:12px">以下 <b>' + overlapped.length + '</b> 个条目被多条规则同时命中。' +
+      '通常无害，但如果其中某条将来要改成「收藏 / 高亮」，会被前面的屏蔽压过 —— 建议确认优先级。</div>' +
+      '<div class="alias">' + esc(ovSamples.join(' · ')) + (overlapped.length > ovSamples.length ? ' …等' : '') + '</div>';
+  }
+
+  // —— 跳过说明（透明度：让用户知道哪些规则没算进去，而不是以为"全都很安全"）——
+  if (skipped.length) {
+    var byWhy = {};
+    skipped.forEach(function (s) { (byWhy[s.why] = byWhy[s.why] || []).push(s.r); });
+    html += '<div class="tip" style="margin-top:12px">以下 ' + skipped.length + ' 条规则未参与演算：<br>';
+    Object.keys(byWhy).forEach(function (w) {
+      html += '· ' + esc(w) + '（' + byWhy[w].map(function (r) { return esc(r.value || '表达式'); }).join('、') + '）<br>';
+    });
+    html += '</div>';
+  }
+
+  box.innerHTML = html;
+}
+
+function initSim() {
+  var btn = document.getElementById('simRun');
+  if (!btn) return;
+  btn.addEventListener('click', runSim);
+  var sel = document.getElementById('simScope');
+  if (sel) sel.addEventListener('change', function () {
+    // 已经跑过一次的话，切范围就顺带重算，省一次点击
+    var box = document.getElementById('simBox');
+    if (box && box.querySelector('table')) runSim();
+  });
+}
+
 // 给出"同类型里也带这个词"的例子，帮用户判断是不是通用词
 function sameTypeSamples(r, n) {
   var disc = D.discovered || {};
@@ -2386,7 +2785,12 @@ function profileSnapshot() {
     groups: (D.groups || []).map(function (g) { return { id: g.id, on: g.on !== false }; }),
     settings: {
       sfw: !!D.settings.sfw, onlyFav: !!D.settings.onlyFav, firstMatchWins: !!D.settings.firstMatchWins,
-      softBlock: !!D.settings.softBlock, previewMode: !!D.settings.previewMode
+      // v6 起 softBlock 变三档 blockDisplay。老档位快照里存的是 softBlock，
+      // 读回来时 applyProfile 直接 Object.assign 会把废弃字段写回 settings ——
+      // 所以这里在写快照时就把它规范化掉，不产生新旧两套字段并存。
+      blockDisplay: BD_VALUES.indexOf(D.settings.blockDisplay) === -1
+        ? (D.settings.softBlock ? 'soft' : 'placeholder') : D.settings.blockDisplay,
+      previewMode: !!D.settings.previewMode
     }
   };
 }
@@ -2656,7 +3060,10 @@ function renderAll() {
   renderDashboard();
   renderConflicts();
   renderBackup();
+  renderPartial();
   renderSwitches();
+  renderBdSel();
+  renderBfSel();
   renderColorDots();
   renderRec();
   renderSync();
@@ -2664,6 +3071,7 @@ function renderAll() {
   renderKeys();
   renderExprTest();
   renderAudit();
+  initSim();
   renderLearn();
   renderProfiles();
   renderMonthly();

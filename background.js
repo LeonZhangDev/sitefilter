@@ -7,7 +7,7 @@
 if (typeof importScripts === 'function') importScripts('collector-native.js');
 
 var DATA_KEY = 'sf_data_v1';
-var SCHEMA_VERSION = 5;   // 与 content.js / options.js 保持一致
+var SCHEMA_VERSION = 6;   // 与 content.js / options.js 保持一致
 
 /* ---------------- 本地错误日志（与 content.js 共用同一份 errLog） ---------------- */
 var ERR_MAX = 200;
@@ -39,7 +39,8 @@ var DEFAULT_SETTINGS = {
   probeAnySite: true,
   showWhy: true,
   watchBtn: true,
-  softBlock: false,
+  softBlock: false,       // 已废弃：由 blockDisplay 取代（migrate 会读一次后删除）
+  blockDisplay: 'placeholder', // 屏蔽后显示方式：'hide' / 'placeholder'（默认）/ 'soft'
   previewMode: false,
   peekHours: 24,
   firstMatchWins: false,
@@ -48,6 +49,8 @@ var DEFAULT_SETTINGS = {
   auditWarn: true,
   keys: {},
   autoBackup: false,
+  backupKeep: 7,               // 自动备份快照轮换份数：0 = 不轮换（无限累积）
+  backfill: 'off',             // 番号站数量补足（唯一会联网的开关，仅 JavDB580 生效）
   hlColor: '#00e5ff',
   ball: { right: 24, bottom: 24 },
   ballLock: false
@@ -79,6 +82,7 @@ function migrate(d) {
       x.watchlist = x.watchlist || {};
       x.cooc = x.cooc || {};
       x.peeks = x.peeks || {};
+      x.shopMarks = x.shopMarks || {};   // 多站比价：番号 → { siteKey: {t, note} } 本地标记
       x.recFeedback = x.recFeedback || {};
       x.recFeedbackDaily = x.recFeedbackDaily || {};
       x.similarRecs = x.similarRecs || {};
@@ -124,6 +128,17 @@ function migrate(d) {
         if (have[s.id]) return;
         x.sites.push({ id: s.id, pattern: s.pattern, enabled: true, selector: '', note: s.note });
       });
+    },
+    // v5 → v6：屏蔽显示方式从二元开关 softBlock 升级为三档 blockDisplay。
+    // 与 content.js 的 step 6 必须保持完全一致（迁移结果不同会导致同一份数据
+    // 在页面侧与后台侧解读出两种行为）。迁移尊重老用户既有行为：
+    // 勾过软屏蔽 → 'soft'，没勾的 → 'hide'；'placeholder' 只作为全新安装的默认。
+    6: function (x) {
+      x.settings = x.settings || {};
+      if (!x.settings.blockDisplay) {
+        x.settings.blockDisplay = x.settings.softBlock ? 'soft' : 'hide';
+      }
+      delete x.settings.softBlock;
     }
   };
   for (var v = from + 1; v <= SCHEMA_VERSION; v++) {
@@ -621,20 +636,71 @@ function buildSimilar() {
   });
 }
 
-/* ---------------- 本地定时自动备份（写入浏览器下载目录） ---------------- */
+/* ---------------- 本地定时自动备份（写入浏览器下载目录） ----------------
+ * v6 改动（建议 ⑤「备份快照留多份」）：
+ *   旧版文件名只到「日期」+ conflictAction:'overwrite'，结果是一天只可能留一份 ——
+ *   同一天第二次备份会把第一次覆盖掉。想回滚到「今天上午改坏之前」就无解了。
+ *   现在文件名带时分秒（不会再撞名），并按 settings.backupKeep 轮换：
+ *   超过保留份数时删掉最旧的自动备份。
+ *
+ * 安全边界：只删「自己写出来的」那些文件 —— 用搜索限定 sitefilter-backup 目录 +
+ * 文件名正则，绝不碰用户手动导出的备份（它们通常不叫 sitefilter-YYYY-M-D_HHMMSS.json）。
+ * backupKeep = 0 表示不轮换（无限累积），交给用户自己清。 */
+var AUTO_BACKUP_DIR = 'sitefilter-backup/';
+var AUTO_BACKUP_RE = /^sitefilter-\d{4}-\d{1,2}-\d{1,2}_\d{2}\d{2}\d{2}\.json$/;
+
+function backupStamp() {
+  var d = new Date();
+  var p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+  return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate() +
+    '_' + p2(d.getHours()) + p2(d.getMinutes()) + p2(d.getSeconds());
+}
+
+// 轮换：保留最新的 keep 份自动备份，删更早的。keep<=0 时不做任何事。
+function rotateAutoBackups(keep) {
+  if (!(keep > 0)) return;
+  if (!chrome.downloads || !chrome.downloads.search) return;
+  try {
+    chrome.downloads.search({}, function (items) {
+      try {
+        var mine = (items || []).filter(function (it) {
+          if (!it || !it.filename) return false;
+          var base = String(it.filename).replace(/\\/g, '/');
+          var name = base.slice(base.lastIndexOf('/') + 1);
+          if (!AUTO_BACKUP_RE.test(name)) return false;
+          // 限定目录：路径里必须出现 sitefilter-backup/（避免误删同名的其他文件）
+          return base.indexOf(AUTO_BACKUP_DIR) !== -1;
+        });
+        // 文件名自带时间戳，直接按名字倒序 = 时间倒序
+        mine.sort(function (a, b) { return String(b.filename).localeCompare(String(a.filename)); });
+        mine.slice(keep).forEach(function (it) {
+          try { chrome.downloads.removeFile(it.id, function () { }); } catch (e) { }
+          try { chrome.downloads.erase({ id: it.id }, function () { }); } catch (e) { }
+        });
+      } catch (e) { logErr('rotateAutoBackups', e); }
+    });
+  } catch (e) { logErr('rotateAutoBackups', e); }
+}
+
 function autoBackup() {
   getData().then(function (d) {
     if (!(d.settings && d.settings.autoBackup)) return;
     try {
       var json = JSON.stringify(d);
       var url = 'data:application/json;charset=utf-8,' + encodeURIComponent(json);
+      var keep = Number(d.settings.backupKeep);
+      if (isNaN(keep)) keep = 7;
       chrome.downloads.download({
         url: url,
-        filename: 'sitefilter-backup/sitefilter-' + todayStr() + '.json',
-        conflictAction: 'overwrite',
+        // 带时分秒 —— 同一天多次备份不再互相覆盖（旧版是一天一份）
+        filename: AUTO_BACKUP_DIR + 'sitefilter-' + backupStamp() + '.json',
+        conflictAction: 'uniquify',
         saveAs: false
-      }, function () { });
-    } catch (e) { }
+      }, function () {
+        // 等这下载登记完再轮换，否则新文件可能还没进列表就被算进"待删"
+        setTimeout(function () { rotateAutoBackups(keep); }, 1500);
+      });
+    } catch (e) { logErr('autoBackup', e); }
   });
 }
 
