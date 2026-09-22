@@ -341,12 +341,22 @@
     ['send.cm', /(^|\.)send\.cm/i],
     ['固实', /(^|\.)solidfiles\.com/i]
   ];
-  var MAGNET_RE = /magnet:\?[^\s"'<>）)】\]]+/gi;
-  var ED2K_RE = /ed2k:\/\/[^\s"'<>）)】\]]+/gi;
-  var THUNDER_RE = /thunder:\/\/[^\s"'<>）)】\]]+/gi;
+  var URL_STOP = '[^\\s"\'<>）)】\\]]+';
+  /* 磁力链接：**不锚定 xt=urn:btih 的位置**。
+     真实的磁力串里参数顺序是任意的 —— `dn=`/`tr=` 排在 `xt=` 前面很常见
+     （很多站的「复制磁力」按钮产出的就是这个顺序），旧写法
+     /^magnet:\?xt=urn:btih:/ 会把它们整条丢掉，且 btih 与 btmh 混用时只认 btih。
+     这里只认「是个 magnet: 链接」，字段交给 parseMagnet() 解析。 */
+  var MAGNET_RE = new RegExp('magnet:\\?' + URL_STOP, 'gi');
+  var ED2K_RE = new RegExp('ed2k://' + URL_STOP, 'gi');
+  var THUNDER_RE = new RegExp('thunder://' + URL_STOP, 'gi');
   var TORRENT_RE = /https?:\/\/[^\s"'<>]*\.torrent(\?[^\s"'<>]*)?/gi;
-  var SIZE_RE = /(\d+(?:\.\d+)?\s?(?:GB|GiB|MB|MiB|KB))/i;
-  var QUALITY_RE = /(2160p|4K|1080p|720p|480p|360p)/i;
+  var SIZE_RE = /(\d+(?:\.\d+)?\s?(?:GB|GiB|MB|MiB|KB|TB|TiB))/i;
+  var QUALITY_RE = /(2160p|4k|1080p|720p|480p|360p)/i;
+  /* 磁力 xt 里的 hash：btih = v1（40 位 hex / 32 位 base32），btmh = v2（multihash，通常 64 位 hex） */
+  var MAGNET_HASH_RE = /xt=urn:(btih|btmh):([^&\s]+)/i;
+  /* magnet 链接里常见的「体积」参数：xl 是精确字节数，其他几个是各站的私有写法 */
+  var MAGNET_SIZE_KEYS = ['xl', 'size', 'length', 'fsize'];
 
   /* ---------------- 运行时状态 ---------------- */
   var S = { settings: {}, sites: [], rules: [], seen: {}, favCodes: {}, discovered: {}, groups: [], statsLog: {}, watchlist: {}, cooc: {}, peeks: {}, errLog: [], shopMarks: {} };
@@ -2589,6 +2599,7 @@
     if (!dlLinks.length) {
       ui.list.innerHTML = '<div class="cf-empty">本页未探测到磁力 / 电驴 / 迅雷 / 种子 / 网盘链接。<br><br>' +
         '支持的来源：&lt;a href&gt;、data-clipboard-text 属性、页面正文里的纯文本 magnet: 串。<br>' +
+        '同一种子（infohash 相同）会自动归并，保留最全的文件名与全部 tracker。<br>' +
         '任意网页都会自动探测（可在「通用设置」关闭）。</div>';
       return;
     }
@@ -2601,8 +2612,17 @@
       if (d.size) meta.push(d.size);
       if (d.quality) meta.push(d.quality);
       if (d.pan) meta.push(d.pan);
+      // 磁力特有信息：v2 标记 / tracker 条数（同 infohash 已归并，这个数=可用线路数）
+      var m = d.magnet;
+      if (m) {
+        if (m.algo === 'btmh') meta.push('v2');
+        if (m.trs && m.trs.length > 1) meta.push(m.trs.length + ' trackers');
+      }
+      var badge = d.type === 'magnet' && m
+        ? '<span class="k magnet">' + (m.algo === 'btmh' ? 'MAGNET·V2' : 'MAGNET') + '</span>'
+        : '<span class="k ' + d.type + '">' + d.type.toUpperCase() + '</span>';
       return '<div class="cf-dlrow">' +
-        '<span class="k ' + d.type + '">' + d.type.toUpperCase() + '</span>' +
+        badge +
         '<span class="info"><span class="n" title="' + escapeHtml(d.raw) + '">' + escapeHtml(d.label) + '</span>' +
         (meta.length ? '<span class="m">' + escapeHtml(meta.join(' · ')) + '</span>' : '') + '</span>' +
         '<button class="cf-mini" data-dl="' + i + '">复制</button>' +
@@ -3598,12 +3618,101 @@
     return { size: '', quality: '' };
   }
 
+  /* ---------------- 磁力：全字段解析（L2） ----------------
+   * 为什么值得单独写一个解析器：磁力串里**本来就带着体积和文件名**，
+   * 而旧实现只读 btih 和 dn，体积靠 metaAround() 在外层 DOM 文本里「猜」——
+   * 猜错（抓到广告位体积 / 抓到别的文件的体积）是静默的，用户看不出来。
+   * 现在优先信链接里的 xl（精确字节数），DOM 文本只作为兜底。
+   *
+   * 返回 null 表示「这是个 magnet: 但不是可用的种子链接」（没有 xt=urn:btih/btmh）——
+   * 调用方据此丢弃，避免把 `magnet:?dn=xxx` 这种残缺串当链接展示。 */
+  function parseMagnet(raw) {
+    var qs = String(raw).replace(/^magnet:\?/i, '');
+    // 站内 HTML 常把 & 写成 &amp;；URL 里也可能有 + 代替空格的写法
+    qs = qs.replace(/&amp;/gi, '&');
+    var hm = qs.match(MAGNET_HASH_RE);
+    if (!hm) return null;
+    var algo = hm[1].toLowerCase();
+    var hash = hm[2].replace(/[^0-9a-z]/gi, '');
+    if (!hash) return null;
+    // v1(btih)：40 hex 或 32 base32；v2(btmh)：multihash，hex 长度可观
+    var hashLen = hash.length;
+    var short10 = hash.slice(0, 10).toUpperCase();
+
+    // 逐段解析查询串（不用 URLSearchParams：jsdom/MV3 里都可用，
+    // 但手写更稳 —— magnet 串常带未编码的 + 与裸空格，URL API 会抛）
+    var parts = qs.split('&');
+    var dn = '', trs = [], xl = 0, altSize = '';
+    for (var i = 0; i < parts.length; i++) {
+      var eq = parts[i].indexOf('=');
+      if (eq < 0) continue;
+      var k = parts[i].slice(0, eq).toLowerCase();
+      var v = parts[i].slice(eq + 1);
+      if (k === 'dn') {
+        if (!dn) dn = decodeParam(v);
+      } else if (k === 'tr') {
+        var t = decodeParam(v);
+        if (t && trs.indexOf(t) < 0) trs.push(t);
+      } else if (MAGNET_SIZE_KEYS.indexOf(k) >= 0) {
+        var n = parseInt(v, 10);
+        if (n > 0) {
+          if (k === 'xl' || !xl) xl = n;          // xl 优先，其余只当兜底
+          if (k !== 'xl' && !altSize) altSize = fmtBytes(n);
+        }
+      }
+    }
+
+    // 从 dn 里拆「体积 + 画质」：`xxx.1080p.4.2GB.mkv` 这种命名极常见
+    var guess = dn ? guessFromName(dn) : { size: '', quality: '' };
+
+    return {
+      algo: algo,
+      hash: hash,
+      hashLen: hashLen,
+      hashShort: short10,
+      dn: dn,
+      trs: trs,
+      xl: xl,
+      size: xl ? fmtBytes(xl) : (altSize || guess.size),
+      quality: guess.quality,
+      sizeFrom: xl ? 'xl' : (altSize ? 'param' : (guess.size ? 'dn' : ''))
+    };
+  }
+
+  // magnet 串里的解码：站内常留着 %XX 和 +，逐一容错解码
+  function decodeParam(v) {
+    var s = String(v);
+    try { s = decodeURIComponent(s.replace(/\+/g, ' ')); } catch (e) { s = s.replace(/\+/g, ' '); }
+    return s;
+  }
+
+  // 字节数 → 人类可读。用 1024 进制（与 BT 客户端口径一致）。
+  // 整数不带小数（1KB 而不是 1.00KB）—— 磁力体积大多数是整数 MB/GB，带两位小数反而显得像估算值。
+  function fmtBytes(n) {
+    if (!(n > 0)) return '';
+    var u = ['B', 'KB', 'MB', 'GB', 'TB'], i = 0, v = n;
+    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+    if (i === 0) return v + u[0];
+    if (v >= 100 || Math.abs(v - Math.round(v)) < 0.005) return Math.round(v) + u[i];
+    return v.toFixed(v >= 10 ? 1 : 2) + u[i];
+  }
+
+  // 从文件名里猜体积与画质。只认「数字+单位」的独立词，避免把番号里的数字当体积。
+  function guessFromName(name) {
+    var s = String(name);
+    var sz = s.match(/(\d+(?:\.\d+)?)\s?(TB|TiB|GB|GiB|MB|MiB)/i);
+    var q = s.match(/(2160p|4k|1080p|720p|480p|360p)/i);
+    return {
+      size: sz ? (sz[1] + sz[2].toUpperCase()) : '',
+      quality: q ? q[1].toLowerCase() : ''
+    };
+  }
+
   function shortLabel(d) {
     if (d.type === 'magnet') {
-      var m = d.raw.match(/btih:([0-9a-f]{40})/i) || d.raw.match(/btih:([0-9a-z]{32})/i);
-      var h = m ? m[1].toUpperCase().slice(0, 10) : '';
-      var dn = d.raw.match(/[?&]dn=([^&]+)/);
-      var name = dn ? decodeURIComponent(dn[1].replace(/\+/g, ' ')) : '';
+      var m = d.magnet;
+      var h = m && m.hashShort ? m.hashShort : '';
+      var name = d.name || '';
       if (name) return (h ? h + ' · ' : '') + name;
       return h ? ('磁力 ' + h + '…') : d.raw.slice(0, 40);
     }
@@ -3613,21 +3722,101 @@
     }
     if (d.type === 'torrent') {
       var seg = d.raw.split('/').pop().split('?')[0];
-      return decodeURIComponent(seg);
+      return decodeParam(seg);
     }
     try { var u = new URL(d.raw, location.href); return (d.pan ? d.pan + ' · ' : '') + decodeURIComponent(u.pathname.split('/').pop() || u.hostname); }
     catch (e) { return d.raw.slice(0, 40); }
   }
 
+  /* pushLink：把探测到的一条候选放进结果集
+   * 去重键不再用整串 raw —— 同一部片换 tracker / 换 dn 顺序就是另一个串，
+   * 旧写法会把它当两条（列表里出现两行一模一样的片）。按 infohash 归并才是对的。
+   * 归并交给后面的 mergeMagnets()（它需要拿到双方才能择优），这里只做「同键合并」。 */
   function pushLink(arr, seen, raw, type, el) {
     raw = String(raw).trim();
-    if (!raw || seen[raw]) return;
-    if (type === 'magnet' && !/^magnet:\?xt=urn:btih:/i.test(raw)) return;
-    seen[raw] = 1;
-    var meta = el ? metaAround(el) : { size: '', quality: '' };
-    var d = { raw: raw, type: type, size: meta.size, quality: meta.quality, pan: panOf(raw), el: el || null };
+    if (!raw) return;
+    var d;
+    if (type === 'magnet') {
+      var m = parseMagnet(raw);
+      if (!m) return;                       // 残缺 magnet（无 xt）→ 丢弃
+      d = {
+        raw: raw, type: type, el: el || null, pan: null, magnet: m,
+        name: m.dn || '', size: m.size, quality: m.quality
+      };
+      // 归并键：algo + hash（大小写无关）；同键的 tr 后面合并、dn 取更长/更完整的
+      var key = 'm:' + m.algo + ':' + m.hash.toLowerCase();
+      var prev = seen[key];
+      if (prev) { mergeMagnet(prev, d); return; }
+      seen[key] = d;
+    } else {
+      var k2 = type + ':' + raw;
+      if (seen[k2]) return;
+      var meta = el ? metaAround(el) : { size: '', quality: '' };
+      d = { raw: raw, type: type, size: meta.size, quality: meta.quality, pan: panOf(raw), el: el || null, name: '' };
+      seen[k2] = d;
+    }
     d.label = shortLabel(d);
     arr.push(d);
+  }
+
+  /* 两条同 infohash 的磁力合并成一条（L4）。
+   * 合并策略：tr 取并集；dn 取「更长」的那个（更完整的文件名通常信息更多）；
+   * el 保留最先出现的（那是页面里真正可点的元素，用于高亮标记）。 */
+  function mergeMagnet(keep, other) {
+    var km = keep.magnet, om = other.magnet;
+    var i;
+    for (i = 0; i < om.trs.length; i++) {
+      if (km.trs.indexOf(om.trs[i]) < 0) km.trs.push(om.trs[i]);
+    }
+    if (om.dn && om.dn.length > (km.dn || '').length) {
+      km.dn = om.dn;
+      keep.name = om.dn;
+    }
+    if (!km.xl && om.xl) { km.xl = om.xl; km.sizeFrom = 'xl'; }
+    if (!keep.size && other.size) keep.size = other.size;
+    if (!keep.quality && other.quality) keep.quality = other.quality;
+    // raw 也跟着更新，保证「复制」出去的是信息最全的那条
+    keep.raw = buildMagnetRaw(km);
+    keep.label = shortLabel(keep);
+  }
+
+  // 由解析结果重建一条规范磁力串（归并后 tr 更全，复制出去才对）
+  function buildMagnetRaw(m) {
+    if (!m || !m.hash) return '';
+    var s = 'magnet:?xt=urn:' + m.algo + ':' + m.hash;
+    if (m.dn) s += '&dn=' + encodeURIComponent(m.dn);
+    if (m.xl) s += '&xl=' + m.xl;
+    for (var i = 0; i < m.trs.length && i < 8; i++) s += '&tr=' + encodeURIComponent(m.trs[i]);
+    return s;
+  }
+
+  /* L4：按 infohash 归并后的最终排序。
+   * 分层（每组内保持探测顺序，稳定）：
+   *   0 有体积且有画质 —— 用户最想先看到的
+   *   1 有体积
+   *   2 有画质
+   *   3 其余（网盘 / 电驴 / 迅雷 / 种子 / 无信息的磁力）
+   * 同层内：磁力优先于其它类型（磁力是主诉求）。 */
+  function magnetRank(d) {
+    if (d.type === 'magnet') {
+      if (d.size && d.quality) return 0;
+      if (d.size) return 1;
+      if (d.quality) return 2;
+      return 3;
+    }
+    if (d.size && d.quality) return 4;
+    if (d.size) return 5;
+    if (d.quality) return 6;
+    return 7;
+  }
+  function sortLinks(arr) {
+    var idx = new Map();
+    for (var i = 0; i < arr.length; i++) idx.set(arr[i], i);
+    arr.sort(function (a, b) {
+      var ra = magnetRank(a), rb = magnetRank(b);
+      if (ra !== rb) return ra - rb;
+      return idx.get(a) - idx.get(b);
+    });
   }
 
   function probeLinks() {
@@ -3685,11 +3874,8 @@
     TORRENT_RE.lastIndex = 0;
     while ((m = TORRENT_RE.exec(bodyText)) !== null) pushLink(arr, seen, m[0], 'torrent', null);
 
-    // 排序：有体积信息的靠前
-    arr.sort(function (a, b) {
-      if (!!b.size !== !!a.size) return b.size ? 1 : -1;
-      return 0;
-    });
+    // L4 排序：按「信息完整度」分层，磁力优先（详见 sortLinks）
+    sortLinks(arr);
 
     dlLinks = arr;
     stats.dl = arr.length;
@@ -4398,6 +4584,36 @@
       });
     });
   }
+
+  /* ---------------- 测试钩子（只读） ----------------
+   * 内容脚本是个 IIFE，闭包内部函数（如磁力解析器 parseMagnet）从外面够不着，
+   * 于是测试只能靠「塞一个 DOM 再读面板文字」间接断言 —— 解析细节（字段口径、
+   * 归并策略、排序层级）根本测不到，改坏了也不会红。
+   *
+   * 这里开一扇只读窗口：**只暴露纯函数与只读快照**，不暴露任何可变状态。
+   * 打开条件：window.__siteFilterTestApi 严格等于 'magnet-only'（测试显式声明）。
+   * 不接受任意对象 —— 否则页面脚本自己塞个对象进来就能摸到扩展内部。
+   * 暴露方式也必须是「框架对象上的只读 getter」，不能挂到 window 上。
+   * 测试怎么用它：见 _test_magnet.js 里的 vm Proxy 桩。 */
+  try {
+    if (window.__siteFilterTestApi === 'magnet-only') {
+      var hookApi = {};
+      var hookSrc = {
+        parseMagnet: parseMagnet,
+        fmtBytes: fmtBytes,
+        guessFromName: guessFromName,
+        magnetRank: magnetRank,
+        buildMagnetRaw: buildMagnetRaw,
+        probeLinks: probeLinks,
+        dlLinks: function () { return dlLinks; },
+        stats: function () { return stats; }
+      };
+      Object.keys(hookSrc).forEach(function (k) {
+        Object.defineProperty(hookApi, k, { get: function () { return hookSrc[k]; }, enumerable: true });
+      });
+      Object.defineProperty(window, '__sfHook', { value: hookApi, enumerable: false });
+    }
+  } catch (e) { /* 测试钩子失败绝不影响主流程 */ }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot);

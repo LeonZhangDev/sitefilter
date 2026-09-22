@@ -377,10 +377,21 @@ SiteFilter 是**纯前端扩展**（Chrome / Edge MV3，无构建步骤、无服
 2. `data-clipboard-text`、`data-url`、`data-link`、`data-magnet`、`data-copy` 属性
 3. 页面正文里的裸 `magnet:` / `ed2k:` / `thunder:` 文本
 
-**顺带提取**：文件大小（GB/MB）、清晰度（4K/1080p/720p…）、网盘来源，直接显示在列表里。
-磁力会展示 BT hash 前 10 位和 `dn=` 里的文件名。
+**磁力链接的深度解析**（不只是抓串）
+- **完整 `xt` 解析**：同时认 `urn:btih:`（BT v1，40 位 hex / 32 位 base32）与 `urn:btmh:`（BT v2，multihash）。
+  参数顺序无关 —— `dn=` / `tr=` 排在 `xt=` 前面的写法同样能认（部分站的「复制磁力」按钮就是这种顺序）。
+- **体积取权威值**：优先读链接自带的 `xl=`（精确字节数），其次 `size=` / `length=` / `fsize=`，
+  都没有才从文件名里猜（只认「数字+单位」的独立词，不会把番号里的数字当体积）。
+- **同种子归并**：`infohash` 相同的多条磁力合并成一条，文件名取更完整的那个，
+  `tr=` 取并集 —— 列表里不会再出现同一部片换 tracker 就重复两行的情况。
+- **按信息完整度排序**：磁力优先于其它类型；同类型内「有体积+有画质 > 有体积 > 有画质 > 其余」。
+- 列表里展示 BT hash 前 10 位、文件名、体积、画质、tracker 条数（v2 种子带 `V2` 标记）。
 
-**操作**：每条右侧「复制」；顶部「复制全部磁力」「复制全部链接」。
+**顺带提取**：文件大小（GB/MB）、清晰度（4K/1080p/720p…）、网盘来源，直接显示在列表里。
+
+> 残缺的 `magnet:` 串（没有 `xt=`，例如只剩一个 `dn=`）会被丢弃，不会当成链接展示。
+
+**操作**：每条右侧「复制」；顶部「复制全部磁力」「复制全部链接」。归并后复制出去的是信息最全的那一条（含全部 tracker）。
 
 可在「完整设置 → 通用设置」里分别关闭：探测本身 / 页面内标记 / 非监管站点也探测。
 
@@ -844,6 +855,7 @@ site-filter/
 ├── _test_backfill.js 番号站数量补足专项：含「开关关闭 / 不在白名单时零网络请求」安全门禁（需 jsdom，可删）
 ├── _test_collector_native.js Collector Native Messaging 桥协议测试（需 jsdom，可删）
 ├── _test_xchina_download.js  XChina 详情页控制条与预览/确认流程测试（需 jsdom，可删）
+├── _test_magnet.js   磁力深度专项：全字段解析/同 infohash 归并/排序分层/残缺串丢弃（需 jsdom，可删）
 ├── docs/             需求 / 设计 / 验收 / 决策文档（入口见 docs/README.md）
 └── README.md         本文档
 ```
@@ -881,7 +893,7 @@ manifest 版本一致**，再出包并附到 GitHub Release 上。版本号请�
 
 ```bash
 npm install            # 装 jsdom
-python ci.py           # 一把跑完：语法检查 + 17 套测试 + 打包校验
+python ci.py           # 一把跑完：语法检查 + 18 套测试 + 打包校验
 
 # 或者单跑某一套
 node _test_daily.js      # 这几个不需要 jsdom
@@ -901,12 +913,13 @@ NODE_PATH=<...> node _test_shopprice.js
 NODE_PATH=<...> node _test_backfill.js
 NODE_PATH=<...> node _test_collector_native.js
 NODE_PATH=<...> node _test_xchina_download.js
+NODE_PATH=<...> node _test_magnet.js
 ```
 
-当前共 **951 项断言全部通过，0 失败**（17 套）：
+当前共 **1004 项断言全部通过，0 失败**（18 套）：
 设置页 169 · 主冒烟 111 · 数据迁移 97 · 站点模板 97 · 表达式引擎 83 · 下番号下载 79 ·
-软屏蔽 45 · 新增功能 41 · 采集器桥 37 · 多站比价 34 · 加密备份 30 · 每日推荐 27 ·
-相似推荐 25 · 写回完整性 24 · 番号补足 22 · 规则条件 20 · 导入 10。
+磁力深度 53 · 软屏蔽 45 · 新增功能 41 · 采集器桥 37 · 多站比价 34 · 加密备份 30 ·
+每日推荐 27 · 相似推荐 25 · 写回完整性 24 · 番号补足 22 · 规则条件 20 · 导入 10。
 
 测试套件由 `make_package.py` 自动发现（`_smoke.js` + 全部 `_test_*.js`），
 新增一套测试不用改打包脚本。

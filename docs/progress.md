@@ -8,8 +8,9 @@
 
 ## Verification
 
-- SiteFilter: 17 suites, 951 assertions, zero failures, plus package validation.
-  (2026-09-22 updated: 需求 002 三档屏蔽 L1、番号站数量补足 L2、建议 ②④⑤ 已落地。)
+- SiteFilter: 18 suites, 1004 assertions, zero failures, plus package validation.
+  (2026-09-22 updated: 需求 002 三档屏蔽 L1、番号站数量补足 L2、建议 ②④⑤ 已落地；
+   磁力深度 L2 全字段解析 + L4 同 infohash 归并/排序已落地，新增 `_test_magnet.js`。)
 - SiteFilter feature work landed on `codex/xchina-collector-integration`; it is **implemented and CI-green
   but not committed to main, not pushed, and not released** (per user's completion criterion).
 - Universal Web Collector: 692 passed, 1 skipped, with one upstream deprecation warning. The final focused shutdown and HLS review suite passed 51 tests with no blocker.
