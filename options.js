@@ -1782,8 +1782,8 @@ var TPL_SELECTORS = [
   { name: 'xchina', test: 'xchina', sel: '.item' },
   { name: 'JavDB', test: 'javdb', sel: '.item' },
   { name: 'PornHub', test: 'pornhub', sel: 'li.pcVideoListItem' },
-  { name: 'YouPorn', test: 'youporn', sel: 'li.videoBox' },
-  { name: 'xsijishe（求出处）', test: 'xsijishe', sel: '#threadlist tbody tr' },
+  { name: 'YouPorn', test: 'youporn', sel: 'article.video-box' },
+  { name: 'xsijishe（求出处）', test: 'xsijishe', sel: '#threadlist div[id^="normalthread_"], #threadlist div[id^="stickthread_"]' },
   { name: 'AVMOO / AVSOX', test: 'avmoo', sel: '.item' },
   { name: '色花堂 / 高清', test: 'sehuatang', sel: '.card' },
   { name: 'JavLibrary', test: 'javlibrary', sel: '.item' }

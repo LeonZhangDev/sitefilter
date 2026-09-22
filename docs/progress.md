@@ -8,7 +8,7 @@
 
 ## Verification
 
-- SiteFilter: 17 suites, 940 assertions, zero failures, plus package validation.
+- SiteFilter: 17 suites, 951 assertions, zero failures, plus package validation.
   (2026-09-22 updated: 需求 002 三档屏蔽 L1、番号站数量补足 L2、建议 ②④⑤ 已落地。)
 - SiteFilter feature work landed on `codex/xchina-collector-integration`; it is **implemented and CI-green
   but not committed to main, not pushed, and not released** (per user's completion criterion).

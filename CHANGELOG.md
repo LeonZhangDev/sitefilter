@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **修正 YouPorn 与 xsijishe 的卡片主选择器**（真实页面验证后发现的静默失效）：
+  - YouPorn：`tpl` 原为 `li.videoBox`，在真实搜索页**命中 0**。真实卡片是
+    `<article class="video-box pc js_video-box js-pop">` —— 标签名是 `article` 不是 `li`，
+    class 是 `video-box`（连字符）不是 `videoBox`（驼峰）。已改为 `article.video-box`（实测命中 32~33）。
+  - xsijishe：`tpl` 原为 `#threadlist tbody tr`，在真实版块页**只命中 1 个**（那是工具栏行）。
+    该站是 Discuz! X3.4 + `nex_*` 主题，帖子行是**纯 `div`**（`id=normalthread_xxx` /
+    `stickthread_xxx`），整页 `<tbody>` 只有 1 个。已改为
+    `#threadlist div[id^="normalthread_"], #threadlist div[id^="stickthread_"]`（实测命中 36）。
+  - 两处 `content.js` 与 `options.js` 的 `TPL_SELECTORS` 副本已同步（`_test_sites.js` 断言两边一致）。
+- **堵住论坛「行模式」兜底把导航菜单当帖子行的漏洞**：xsijishe 版块页里有 103 个
+  `<ul><li>` 是下拉菜单（"立即注册""图片区"…），旧版 `detectRows()` 的 `'ul li'` 兜底会把它们
+  识别成卡片 —— 表现为**用户能"屏蔽"菜单项，真正的帖子一行都屏蔽不到**（静默错误）。
+  现在兜底命中必须落在内容容器（`#threadlist` / `#threadlisttableid` / `form#moderate` /
+  `.bm` / `#ct`）内，否则换下一个选择器；无明确列表容器的通用论坛维持原逻辑。
+
 ### 新增功能
 
 - XChina 详情页可将相册全部图片/视频或单个视频交给 Universal Web Collector，并恢复同内容的最新任务摘要。

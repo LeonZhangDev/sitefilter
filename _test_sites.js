@@ -304,5 +304,43 @@ check('三处 SCHEMA_VERSION 都是 6',
   check('「已看」回写也用组名', /site: sourceGroup\(\)/.test(SRC.content));
 }
 
+/* ============ ⑩ 三个新站的主选择器（tpl）必须与真实页面一致 ============
+ * 2026-09-22 实测发现 YouPorn 与 xsijishe 的 tpl 写错，主路径完全失效：
+ *   YouPorn  : tpl='li.videoBox'            → 真实页 0 命中（真身 article.video-box）
+ *   xsijishe : tpl='#threadlist tbody tr'   → 真实页 1 命中（那是工具栏，帖子行是纯 div）
+ * 这两条把「真实页面长什么样」钉死，避免以后又被想当然地写回去。
+ * （未联网，仅静态断言字段值；真实网络验证见 docs/requirements/004。） */
+{
+  check('YouPorn tpl 用 article.video-box（实测连字符 + article，不是 li.videoBox）',
+    yp.tpl === 'article.video-box');
+  check('YouPorn tpl 不再出现驼峰 videoBox',
+    !/videoBox/.test(yp.tpl) && !(yp.sel || []).some(s => /videoBox/.test(s)));
+  check('YouPorn sel 首选也是 article.video-box（不是 li.videoBox）',
+    (yp.sel || [])[0] === 'article.video-box');
+  check('YouPorn sel 仍保留 .video-box 作为兜底',
+    (yp.sel || []).indexOf('.video-box') !== -1);
+
+  check('xsijishe tpl 用 normalthread_/stickthread_ 两个 id 前缀选择器',
+    /normalthread_/.test(xs.tpl) && /stickthread_/.test(xs.tpl));
+  check('xsijishe tpl 不再用 #threadlist tbody tr（实测只命中工具栏 1 个）',
+    !/tbody\s+tr/.test(xs.tpl));
+  check('xsijishe 仍是 rowMode（论坛行没有图片，需要行模式）', xs.rowMode === true);
+
+  // PornHub 实测正确，锁住别被误改
+  check('PornHub tpl 保持 li.pcVideoListItem（实测 37 命中）',
+    ph.tpl === 'li.pcVideoListItem');
+}
+
+/* ============ ⑪ detectRows() 兜底的导航菜单防护 ============
+ * 实测 xsijishe 版块页里有 103 个 <ul><li> 是导航菜单（"立即注册"/"图片区"…），
+ * 旧版 'ul li' 兜底会把它们当帖子行 —— 用户能"屏蔽"菜单项，真帖子一行都屏蔽不到。
+ * 现在加了"必须落在内容容器内"的判据。这里断言该判据确实存在于源码。 */
+{
+  check('detectRows 有导航防护（内容容器判据）', /hasListRoot/.test(SRC.content));
+  check('detectRows 判据包含 #threadlist / form#moderate',
+    /#threadlist/.test(SRC.content) && /form#moderate/.test(SRC.content));
+  check('detectRows 里对候选做了祖先链检查', /parentElement/.test(SRC.content));
+}
+
 console.log('\n' + (pass ? '全部通过' : '存在失败项'));
 process.exit(pass ? 0 : 1);

@@ -201,8 +201,10 @@
     },
     {
       id: 's_youporn', name: 'YouPorn', pattern: '*://*.youporn.com/*', host: /youporn/i,
-      sel: ['li.videoBox', '.video-box', 'li.video', '.item', '.card'],
-      tpl: 'li.videoBox', tplTest: 'youporn', enabled: true, code: false,
+      // 真实卡片是 <article class="video-box pc js_video-box js-pop">（2026-09-22 实测搜索页 33 个）。
+      // 注意：标签名是 <article> 不是 <li>，class 是 video-box（连字符）不是 videoBox（驼峰）。
+      sel: ['article.video-box', '.video-box', 'li.video', '.item', '.card'],
+      tpl: 'article.video-box', tplTest: 'youporn', enabled: true, code: false,
       sbtn: 'YP', search: 'https://www.youporn.com/search/?query={q}',
       idFrom: /\/watch\/(\d+)/i, idPrefix: 'yp',
       dims: [
@@ -213,8 +215,14 @@
     },
     {
       id: 's_xsijishe', name: 'xsijishe（求出处）', pattern: '*://*.xsijishe.net/*', host: /xsijishe/i,
-      sel: ['#threadlist tbody tr', '.nex_forum_lists li', 'tbody tr'],
-      tpl: '#threadlist tbody tr', tplTest: 'xsijishe', enabled: true, code: false, rowMode: true,
+      // Discuz! X3.4 + nex_* 主题：帖子行是**纯 div**（id=normalthread_xxx / stickthread_xxx），
+      // 整页 <tbody> 只有 1 个（工具栏），所以 '#threadlist tbody tr' 只命中 1 个、不能用。
+      // 2026-09-22 实测 forum-40-1.html：#threadlist div[id^="normalthread_"] = 26、
+      // div[id^="stickthread_"] = 10（合计 36，行容器为 .nex_forum_lists）。
+      sel: ['#threadlist div[id^="normalthread_"]', '#threadlist div[id^="stickthread_"]',
+        '#threadlist .nex_forum_lists', '.nex_forum_lists'],
+      tpl: '#threadlist div[id^="normalthread_"], #threadlist div[id^="stickthread_"]',
+      tplTest: 'xsijishe', enabled: true, code: false, rowMode: true,
       idFrom: /(?:thread-|tid=)(\d+)/i, idPrefix: 'dz',
       dims: [
         { kind: 'tag', href: /(forum-|forumdisplay|mod=forumdisplay)/i, cls: /(forum)/i },
@@ -982,6 +990,18 @@
   // 列表行模式兜底：论坛标题行通常没有图片，detectGeneric 的「必须含 img」会全军覆没
   function detectRows() {
     var sels = ['#threadlist tbody tr', '#threadlist tr', 'tbody tr', '.nex_forum_lists li', 'ul li'];
+    // ⚠️ 导航菜单污染防护（2026-09-22 实测踩到）：
+    // 论坛网页里有大量 <ul><li> 是**下拉菜单/导航**（如"立即注册""图片区"），
+    // 它们同样有 <a href> 且文本够长，会被 'ul li' 误当成帖子行 ——
+    // 结果是用户能"屏蔽"掉菜单项，而真正的帖子一行都屏蔽不到（静默错误）。
+    // 判据：兜底命中必须落在主要内容区（#threadlist / form#moderate / .bm / #ct 内），
+    // 只有 0 个落进去时，才认定这组选择器无效、换下一个。
+    // 注意：该判据只在**存在明确列表容器**时生效；通用论坛（无这些容器）走原逻辑。
+    var HOST_OK = /#threadlist|#threadlisttableid|form#moderate|\.bm\b|#ct\b/;
+    var hasListRoot = false;
+    try {
+      hasListRoot = !!document.querySelector('#threadlist, #threadlisttableid, form#moderate');
+    } catch (e) { hasListRoot = false; }
     for (var i = 0; i < sels.length; i++) {
       try {
         var raw = document.querySelectorAll(sels[i]);
@@ -991,6 +1011,17 @@
           if (!visibleRow(el)) continue;
           var a = el.querySelector('a[href]');
           if (!a || txt(a).length < 2) continue;
+          if (hasListRoot) {
+            // 该元素或其祖先必须落在内容容器内，否则视为菜单项
+            var inRoot = false;
+            var n = el;
+            while (n && n !== document) {
+              var idc = (n.id || '') + ' ' + (typeof n.className === 'string' ? n.className : '');
+              if (HOST_OK.test(idc)) { inRoot = true; break; }
+              n = n.parentElement;
+            }
+            if (!inRoot) continue;
+          }
           els.push(el);
         }
         if (els.length >= 3) { log('rows via selector', sels[i], els.length); return els.slice(0, 200); }

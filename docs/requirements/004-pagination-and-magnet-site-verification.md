@@ -1,9 +1,13 @@
 # 番号站翻页 + 磁力站可行性验证报告
 
-验证时间：2026-09-22 14:00–14:15 GMT+8
+验证时间：2026-09-22 14:00–14:15（番号站/磁力站）+ 17:05–17:30（三个新站） GMT+8
 验证方式：真实 `curl` 抓取 + `jsdom` 解析（**只读，未改任何代码**）
 验证人：SiteFilter 开发过程
-原始产物：`.worktrees/probe/`（可删）
+原始产物：`.worktrees/probe/`（第一部分）、`.worktrees/probe2/`（三个新站，均可删）
+
+> **最新补测（第三节补）结论**：v1.2.0 新增的三个站（PornHub / YouPorn / 西斯寂舍）
+> 在真实页面上**都有问题** —— YouPorn 与西斯寂舍的 `tpl` 主选择器写错，
+> 西斯寂舍的兜底还会把**导航菜单认成卡片**（静默错误）。详见第三·补节。
 
 ---
 
@@ -128,6 +132,198 @@ Origin:  https://sofa.jiugeciliox.top
 
 ---
 
+## 三补、三个新站（PornHub / YouPorn / 西斯寂舍）的真实页面验证
+
+验证时间：2026-09-22 17:05–17:30 GMT+8
+验证方式：真实 `curl` 抓取 + `jsdom` 解析（**只读，未改任何代码**）
+原始产物：`.worktrees/probe2/`（可删）
+
+> 这三个站是 v1.2.0 新增的预置监听站点，此前只做了「模板写好了」，
+> **从未在真实页面上验证过选择器**。本次补齐。
+
+### 结论速览
+
+| 站 | 主选择器 `tpl` | 真实页面命中 | 判定 |
+| --- | --- | --- | --- |
+| **PornHub** | `li.pcVideoListItem` | **37** | ✅ 正确 |
+| **YouPorn** | `li.videoBox` | **0**（真实是 `article.video-box`） | ❌ **需要修** |
+| **西斯寂舍** | `#threadlist tbody tr` | **0**（真实是 `#threadlist div[id^="normalthread_"]`） | ❌ **需要修** |
+
+### 3.1 PornHub —— 选择器正确，但 `tag` 维度落空
+
+抓取 `https://www.pornhub.com/video/search?search=japanese` → HTTP 200 / 1.38 MB。
+
+| 选择器 | 命中 |
+| --- | --- |
+| `li.pcVideoListItem`（`tpl`） | **37** ✅ |
+| `.videoBox` | 37 ✅ |
+| `#videoSearchResult li` | 32 ✅ |
+| `.phimage` | 37 ✅ |
+| `.item` | 0 |
+
+- `idFrom = /[?&]viewkey=([0-9a-z]+)/i` → **34/37 命中**（`6a7345f18087e`、`ph61e2ad4914540`…）✅
+- **actress 维度** href 18/37（`/model/chidori-and-nobu`、`/model/hajimesuper`）✅
+- **maker 维度** href 19/37 + cls 20/37（`/channels/japan-in-love`）✅
+- ⚠️ **tag 维度 href 0/37、cls 0/37 —— 完全落空**
+
+**tag 为什么落空**（已进一步核实，不是选择器写错）：
+
+1. 列表页卡片里**根本没有分类链接**：`/video?c=`（模板 tag 正则含此项）在卡片内出现 **0/37**；
+   `/categories/` 全页仅 20 处，全部位于**导航/页脚**，卡片内 0 处。
+2. 详情页（`view_video.php?viewkey=…`，1.57 MB）同样如此：
+   `/categories/` 只有 8 处，且是**导航栏 + help.pornhub.com 帮助中心**的链接，
+   **没有一处是该视频自己的标签**。
+3. 结论：**PornHub 的卡片/详情页不暴露可右键屏蔽的分类链接** —— 这是站点信息架构问题，
+   不是模板 bug。`tag` 维度在 PH 上**本质上用不到**，保留即可（无害），
+   但**不要指望它能屏蔽分类**。
+
+### 3.2 YouPorn —— `tpl` 写错了（tag 名 + class 名都错）
+
+抓取 `https://www.youporn.com/search/?query=japanese` → HTTP 200 / 522 KB。
+
+| 选择器 | 命中 |
+| --- | --- |
+| `li.videoBox`（`tpl`） | **0** ❌ |
+| `.video-box` | **33** ✅ |
+| `li.video` / `.item` / `.card` | 0 |
+
+真实 DOM：
+
+```html
+<article class="video-box pc js_video-box js-pop">
+  <div class="searchResults ...">
+```
+
+**两处错误**：
+1. 标签名不是 `<li>`，是 **`<article>`**
+2. class 不是 `videoBox`（驼峰），是 **`video-box`（连字符）**
+
+含 `videoBox` 字样的 class 实测只有：`video-box` / `js_video-box` / `video-box-image` / `js_video-box-url`
+—— **没有任何一个叫 `videoBox`**。`li` 的 class 抽样里也没有 video 相关项。
+
+其余维度（以 `.video-box` 为卡片）：
+- `idFrom = /\/watch\/(\d+)/i` → **32/33** ✅
+- maker href 19/33 + cls 3/33 ✅
+- actress href 3/33（搜索页只偶尔带演员链接，正常）
+- ⚠️ tag 0/33 —— 与 PH 同理，YP 卡片不暴露分类链接
+
+**建议修法**：`tpl` 与 `sel` 把 `li.videoBox` 换成 `article.video-box` / `.video-box`。
+（注意：`sel` 里已有 `.video-box`，所以**兜底能救回来**；但 `tpl` 是首选路径，
+写错意味着每次都要多走一轮兜底，且 `tplTest` 可能误判。）
+
+### 3.3 西斯寂舍 —— `tpl` 写错了，且**兜底会认错元素**（最严重）
+
+抓取：
+
+| URL | HTTP | 字节 | 说明 |
+| --- | --- | --- | --- |
+| `https://xsijishe.net/` | 200 | 379515 | 首页（**裸域名**） |
+| `https://xsijishe.net/forum-40-1.html` | 200 | 404188 | 「求出处」版块（`#threadlist` 在此） |
+
+⚠️ **`www.xsijishe.net` 不可用**：TLS 握手失败（`SSLEOFError`），
+但**裸域 `xsijishe.net` 正常**（TLSv1.3）。DNS 解析到 `198.18.0.x`（本地代理 fake-IP）。
+→ 模板 `pattern: '*://*.xsijishe.net/*'` 单独**配不到裸域**，
+靠 `matchSite()` 的**裸域名兜底**（`*://*.` → `*://`）才匹配上 —— 已验证可用 ✅
+
+**`tpl` 为什么是 0**：
+
+| 选择器 | 命中 |
+| --- | --- |
+| `#threadlist tbody tr`（`tpl`） | **1**（且是工具栏行，不是帖子）❌ |
+| `#threadlist div[id^="normalthread_"]` | 26 ✅ |
+| `#threadlist div[id^="stickthread_"]` | 10 ✅ |
+
+真实结构（Discuz! X3.4 + `nex_*` 主题）：
+
+```
+DIV#threadlist.bm
+ └ DIV.bm_c
+    └ FORM#moderate
+       └ DIV#threadlisttableid
+          └ DIV.nex_forum_lists   ← 一行（id=normalthread_xxx / stickthread_xxx）
+             ├ DIV.nex_forum_lists_tops   (作者/时间元信息)
+             └ DIV.nex_forum_lists_mids   (标题/分页)
+```
+
+**该主题的帖子行是纯 `<div>`，整页 `tbody` 只有 1 个**（工具栏），
+所以 `#threadlist tbody tr` 必然只命中 1 个 —— `tpl` 完全不适用。
+
+**用正确的行容器后，两个维度都正常**：
+
+| 维度 | 正确行容器下命中 |
+| --- | --- |
+| tag（版块） | href 27/36 + cls 36/36 ✅ |
+| actress（作者） | href 36/36 + cls 36/36 ✅ |
+
+作者链接真实形式是 `home.php?mod=space&uid=838751`；
+模板 `href: /(space-uid-|mod=space|uid=)/i` 靠 **`mod=space`/`uid=` 兜住** ✅
+（页面里 `space-uid-` 链接数为 **0**）。作者 class 实为 `nex_authorinfo` /
+`nex_threads_author`，模板 `cls: /(authi|author)/i` 命中 ✅
+
+#### ⚠️⚠️ 最严重的问题：`detectRows()` 兜底会**把导航栏认成卡片**
+
+`findCards()` 在 `rowMode` 下若 `tpl` 不足 3 个，会走 `detectRows()`：
+
+```js
+var sels = ['#threadlist tbody tr', '#threadlist tr', 'tbody tr',
+            '.nex_forum_lists li', 'ul li'];
+```
+
+实测这 5 个候选在真实版块页上的表现：
+
+| 选择器 | 原始命中 | 含链接且有文本 |
+| --- | --- | --- |
+| `#threadlist tbody tr` | 1 | 1 |
+| `#threadlist tr` | 1 | 1 |
+| `tbody tr` | 1 | 1 |
+| `.nex_forum_lists li` | 81 | **0**（都是空壳） |
+| **`ul li`** | **197** | **103 ← 会命中这里** |
+
+那 103 个 `ul li` 的真实内容：
+
+```
+[0] 本版     [1] 用户      [2] 登陆账号   [3] 立即注册
+[4] 首页Portal [5] 论坛BBS   [6] 综合      [7] 图片区
+[8] 视频区    [9] ACG区     [10] 悬赏区    [11] 求出处
+```
+
+所在 `ul` 的 class：`p_pop` / `p_pop h_pop` / `ttp bm cl` —— **全是下拉菜单/导航**。
+**103 个候选里只有 4 个落在 `#threadlist` 内。**
+
+→ 后果：在西斯寂舍上，扩展会把**导航菜单项当成"卡片"**，
+用户可以"屏蔽"掉「立即注册」「图片区」这种菜单项，而**真正的帖子一行都屏蔽不到**。
+**这是静默错误**：UI 看起来在工作，实际全错。
+
+### 3.4 修复建议（等 Leon 决定后再动代码）
+
+按「先讨论后实施」的约定，**本次只验证、未改任何代码**。建议改法：
+
+| 站 | 字段 | 现在 | 建议 |
+| --- | --- | --- | --- |
+| YouPorn | `tpl` | `li.videoBox` | `article.video-box` |
+| YouPorn | `sel` | `['li.videoBox','.video-box','li.video','.item','.card']` | 把 `li.videoBox` 换成 `article.video-box`（保留 `.video-box`） |
+| 西斯寂舍 | `tpl` | `#threadlist tbody tr` | `#threadlist div[id^="normalthread_"], #threadlist div[id^="stickthread_"]` |
+| 西斯寂舍 | `sel` | `['#threadlist tbody tr','.nex_forum_lists li','tbody tr']` | 用 `#threadlist div[id^="normalthread_"]`、`#threadlist div[id^="stickthread_"]`、`#threadlist .nex_forum_lists` |
+| 西斯寂舍 | `detectRows()` 兜底 | 含 `ul li` | **去掉 `ul li`** 或加「必须落在 `#threadlist` 内」的约束，否则认错导航 |
+
+> 另：`content.js:984` 的 `detectRows()` 里 `'#threadlist tbody tr'` 同样失效，
+> 且最后一项 `'ul li'` 是这次误识别的主因 —— 两处需一起看。
+
+### 3.5 与 v1.2.0 CHANGELOG 说法的偏差（需 Leon 知悉）
+
+v1.2.0 CHANGELOG 写：「三者都带各自的**维度识别规则**，卡片右键的『屏蔽演员/片商/标签』可直接用」。
+实测后：
+
+| 站 | 实测 |
+| --- | --- |
+| PornHub | 演员 ✅ / 片商 ✅ / **标签 ❌（站点不暴露）** |
+| YouPorn | 演员 △（搜索页少）/ 片商 ✅ / **标签 ❌**；且 **`tpl` 写错，主路径失效** |
+| 西斯寂舍 | 标签 ✅ / 作者 ✅；但 **`tpl` 写错 + 兜底认错导航** |
+
+→ 「可直接用」对这 3 个站**都不成立**，其中西斯寂舍属于**会静默做错事**。
+
+---
+
 ## 四、复现命令（供以后复查）
 
 ```bash
@@ -149,4 +345,36 @@ curl -s -A "$UA" -X POST "https://sofa.jiugeciliox.top/api/v1/search" \
   -H "Referer: https://sofa.jiugeciliox.top/sh/result" \
   -H "Origin: https://sofa.jiugeciliox.top" \
   -d '{"page":1,"keyword":"三上悠亚","order_by":"_score","in_app":false}'
+```
+
+### 三个新站（2026-09-22 17:05 补测）
+
+```bash
+UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
+
+# PornHub：列表页 / 分类页 / 详情页
+curl -s -A "$UA" "https://www.pornhub.com/video/search?search=japanese" -o ph.html
+curl -s -A "$UA" "https://www.pornhub.com/categories" -o ph-cat.html
+curl -s -A "$UA" "https://www.pornhub.com/view_video.php?viewkey=6a7345f18087e" -o ph-detail.html
+
+# YouPorn：搜索页 / 分类页
+curl -s -A "$UA" "https://www.youporn.com/search/?query=japanese" -o yp.html
+curl -s -A "$UA" "https://www.youporn.com/categories/" -o yp-cat.html
+
+# 西斯寂舍：注意 www 不可用（TLS 失败），必须用裸域
+curl -s -A "$UA" "https://xsijishe.net/"               -o xs-home.html
+curl -s -A "$UA" "https://xsijishe.net/forum-40-1.html" -o xs-forum40.html
+# 反例：这个会 TLS 握手失败
+curl -s -A "$UA" "https://www.xsijishe.net/"            # → SSLEOFError
+```
+
+解析后核对（jsdom）：
+
+```
+PH : li.pcVideoListItem = 37 ✓ | tag 维度 = 0 ✗
+YP : li.videoBox = 0 ✗ | .video-box = 33 ✓
+XS : #threadlist tbody tr = 1 ✗
+   | #threadlist div[id^="normalthread_"] = 26 ✓
+   | #threadlist div[id^="stickthread_"]  = 10 ✓
+   | detectRows 兜底会落到 'ul li' = 103 个导航项 ✗✗
 ```
