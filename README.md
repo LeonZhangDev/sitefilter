@@ -29,6 +29,11 @@
 > JavDB580 上额外抓取列表页来填补被屏蔽卡片的空位（不带 Cookie、限速、最多 3 页）。
 > 除这个开关主动打开的情况外，扩展不会发起任何网络请求。
 
+> 🔌 **部分功能需配合 [Universal Web Collector](https://github.com/LeonZhangDev/universal-web-collector) 使用。**
+> 屏蔽 / 规则 / 收藏 / 推荐 / 下载链接探测 / 备份等**全部核心功能开箱即用、零额外依赖**；
+> 只有「XChina 交给 Collector 下载」这一类需要配套项目 + 本机桥接。
+> 详见 [一·五、依赖说明](#一五依赖说明哪些功能需要-universal-web-collector)。
+
 ---
 
 ## 一、安装（开发者模式加载）
@@ -54,6 +59,41 @@ XChina 照片和视频详情页会显示 **交给 Collector 下载**。扩展只
 再次访问同一内容时，页面会恢复最新关联任务。若 Collector 提示需要登录，只有点击“启动登录”才会打开 Collector 的 WSLg 登录会话。SiteFilter **不会读取、导出或传输 Chrome/Edge Cookie**。
 
 任务终态通知采用“最多一次”策略：扩展会先在本地标记通知已领取，再请求浏览器显示固定 ID 的通知。如浏览器明确返回创建失败，当前服务工作者会回滚标记以便重试；若服务工作者恰好在两步之间终止，可能漏掉一次通知，但不会因重启反复弹出。
+
+---
+
+## 一·五、依赖说明：哪些功能需要 Universal Web Collector
+
+SiteFilter 是**纯前端扩展**（Chrome / Edge MV3，无构建步骤、无服务端进程）。
+**绝大部分功能开箱即用，不需要任何配套项目**：
+
+| 功能 | 需要 Collector？ | 说明 |
+|---|---|---|
+| 卡片屏蔽（隐藏 / 保留占位 / 模糊三档） | ❌ 不需要 | 全靠页面内 CSS class，纯本地 |
+| 规则管理 / 规则体检 / 调试器 / 候选规则 | ❌ 不需要 | 只读 `chrome.storage.local` |
+| 番号收藏夹 / 待看队列 / 发现库 / 推荐 | ❌ 不需要 | 纯本地计算 |
+| 下载链接探测（磁力 / 电驴 / 迅雷 / 种子 / 网盘） | ❌ 不需要 | 只解析当前页面 DOM |
+| 导出 HTML 片单 / 加密备份 | ❌ 不需要 | 浏览器内置 WebCrypto |
+| **XChina 相册/视频「交给 Collector 下载」** | ✅ **必需** | 详情页控制条；缺桥接时提示「未安装本机桥接」 |
+| **网页解析 / 登录态 / 下载 / 重试 / 落盘** | ✅ **必需** | 这些**全部由 Collector 负责**，扩展不做 |
+| **任务状态回显与终态通知** | ✅ **必需** | 无 Collector 则无任务可关联、无通知 |
+
+也就是：**扩展是「眼睛和手」，Collector 是「干活的」**。扩展只做页面控制、预览确认、
+任务关联与状态回显；真正的抓取、下载、去重、输出目录全部属于 Collector。
+
+接线三步（细节见上一节）：
+
+1. 部署 **Universal Web Collector** 本体（仓库：
+   `https://github.com/LeonZhangDev/universal-web-collector`）；
+2. 在 Collector 项目目录下运行
+   `integrations\sitefilter-native-host\install-native-host.ps1`，
+   注册 **Native Messaging 本机桥接**（按扩展固定 ID
+   `jaihdgjnnpmiabeoefmihmjhoodcjlhf` 注册，Chrome / Edge 各一份）；
+3. 回到扩展，在 XChina 详情页点「重新检测」。
+
+> 扩展**不会**直接请求 `localhost`，也**不会**读取 / 导出 / 传输浏览器 Cookie。
+> 所有 Collector 通信都经 Native Messaging 桥接校验后转发。
+> 因此若只关心屏蔽与收集类功能，**可以完全不装 Collector**，扩展照常工作。
 
 ---
 
