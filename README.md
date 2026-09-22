@@ -813,7 +813,9 @@ site-filter/
 ├── background.js     后台：默认数据、右键菜单、角标、每日推荐/相似推荐调度、自动备份、数据迁移、错误日志
 ├── content.js        内容脚本：卡片识别、增量提取、规则匹配（含评分/日期条件、表达式、首条命中、有效期）、软/硬屏蔽、键盘导航、右键菜单（含临时屏蔽/调试）、规则调试器、已看自动记录、多站直达、番号收藏、待看队列、链接探测、悬浮面板
 ├── content.css       卡片屏蔽/软屏蔽遮罩/预览描边/当前导航项/右键菜单/收藏/高亮/♥⏳按钮/下载标记/悬停原因浮层/规则调试器样式
+├── xchina-download.js XChina 详情页控制条（内容脚本之一；「交给 Collector 下载」的入口）
 ├── expr.js           条件表达式引擎（独立一份，content script 与设置页共用，见上文）
+├── collector-native.js  Collector Native Messaging 桥（由 background.js 用 importScripts 加载）
 ├── popup.html/js     工具栏弹窗
 ├── options.html/js   完整设置页（规则+规则体检+规则包 / 表达式测试器 / 分组+场景档位 / 站点 / 番号收藏夹 / 发现&推荐+候选规则 / 数据看板+月度回顾 / 每日推荐 / 软屏蔽 / 加密备份 / 错误日志 / 快捷键 / 通用设置）
 ├── options.css
@@ -837,7 +839,12 @@ site-filter/
 ├── _test_encrypt.js  加密备份专项：加密产物形状/明文不泄漏/正确密码往返/错误密码失败/篡改检测/salt 随机性（node 直接跑，可删）
 ├── _test_writeback.js 写回完整性测试：守住"整体写回把别的字段冲掉"这一类 bug（需 jsdom，可删）
 ├── _test_migrate.js  数据迁移与错误日志单测：版本升级/字段补齐/三处版本号一致性守卫（node 直接跑，可删）
-├── _test_sites.js    站点模板守卫：模板自洽/派生正确/三处副本一致/迁移补齐新站（node 直接跑，可删）
+├── _test_sites.js    站点模板守卫：模板自洽/派生正确/三处副本一致/迁移补齐新站 + 三站真实选择器钉死（node 直接跑，可删）
+├── _test_shopprice.js 多站比价专项（需 jsdom，可删）
+├── _test_backfill.js 番号站数量补足专项：含「开关关闭 / 不在白名单时零网络请求」安全门禁（需 jsdom，可删）
+├── _test_collector_native.js Collector Native Messaging 桥协议测试（需 jsdom，可删）
+├── _test_xchina_download.js  XChina 详情页控制条与预览/确认流程测试（需 jsdom，可删）
+├── docs/             需求 / 设计 / 验收 / 决策文档（入口见 docs/README.md）
 └── README.md         本文档
 ```
 
@@ -858,7 +865,7 @@ python ci.py --release minor           # 门禁通过 → 抬次版本 → 出�
 - `dist/build-info.json` —— 版本、`schemaVersion`、构建时间、git hash / 是否 dirty、
   每个文件的 sha256、以及**这次打包前跑测试的结果**。出问题时先看这个。
 
-`schemaVersion: 4` · `manifest version: 1.1.0`
+`schemaVersion: 6` · `manifest version: 1.2.0`
 
 **打包脚本做了什么**：只收录**白名单文件**（而不是"排除"——避免漏排测试/临时文件）、校验
 manifest 必填字段与图标真实尺寸、检查 `default_locale` 之类会导致「加载失败」的坑、
