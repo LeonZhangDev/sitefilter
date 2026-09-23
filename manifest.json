@@ -44,6 +44,7 @@
       ],
       "js": [
         "expr.js",
+        "rulecheck.js",
         "content.js",
         "xchina-download.js"
       ],

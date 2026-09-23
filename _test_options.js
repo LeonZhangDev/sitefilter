@@ -119,6 +119,7 @@ try {
   // 与真实页面一致：先加载共享表达式引擎（options.html 里的 <script src="expr.js">），
   // jsdom runScripts:'outside-only' 不会自动取外部脚本，这里手动对齐。
   win.eval(fs.readFileSync(path.join(EXT, 'expr.js'), 'utf8'));
+  win.eval(fs.readFileSync(path.join(EXT, 'rulecheck.js'), 'utf8'));
   win.eval(js);
 } catch (e) { threw = e; }
 

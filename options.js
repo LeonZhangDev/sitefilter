@@ -2362,15 +2362,15 @@ var SCOPE_LABEL = {
 
 function ruleImpact(r) {
   var disc = D.discovered || {};
-  var t = r.type, v = String(r.value || '').toLowerCase();
-  if (!v) return null;
+  var t = r.type;
   if (['expr', 'code', 'keyword'].indexOf(t) !== -1) return null;
+  if (!(window.SF_RULECHECK && SF_RULECHECK.matchEntity)) return null;
   var n = 0, total = 0;
   Object.keys(disc).forEach(function (k) {
     var it = disc[k] || {};
     if ((it.type || '') !== t) return;
     total++;
-    if (String(it.v || '').toLowerCase().indexOf(v) !== -1) n++;
+    if (SF_RULECHECK.matchEntity(r, String(it.v || ''), r.scope || 'all')) n++;
   });
   if (!total) return null;
   return { n: n, total: total, ratio: n / total };
@@ -2398,10 +2398,32 @@ function renderAudit() {
     var im = ruleImpact(r);
     if (im && im.n >= 8 && im.ratio >= 0.7) wide.push({ r: r, im: im });
   });
-  var totalIssue = zero.length + wide.length;
+  // ③ 样本集从未命中（比「0 命中」更确定）：启用中、实体类、成熟(>7天)、从未真实命中，
+  //    且发现库里有该类实体却 0 匹配 —— 基本可断定写错 / 作用域不对 / 别名漏了。
+  //    用 rulecheck.matchEntity 复用与线上一致的口径（含 match 模式与别名）。
+  var corpusDead = [];
+  if (window.SF_RULECHECK && SF_RULECHECK.matchEntity) {
+    rules.forEach(function (r) {
+      if (r.enabled === false) return;
+      if (['expr', 'code', 'keyword'].indexOf(r.type) !== -1) return;
+      if ((r.hits || 0) > 0) return;
+      if (!r.createdAt || (now - r.createdAt) <= 7 * 864e5) return;
+      var dt = SF_RULECHECK.SCOPE_TO_DISC[r.scope || 'all'];
+      if (!dt) return;
+      var ent = [];
+      Object.keys(D.discovered || {}).forEach(function (k) {
+        var it = (D.discovered || {})[k] || {};
+        if ((it.type || '') === dt && it.v) ent.push(String(it.v));
+      });
+      if (!ent.length) return; // 没样本，无法判断，交回 ① 处理
+      var hit = ent.some(function (nm) { return SF_RULECHECK.matchEntity(r, nm, r.scope || 'all'); });
+      if (!hit) corpusDead.push(r);
+    });
+  }
+  var totalIssue = zero.length + wide.length + corpusDead.length;
   if (cnt) {
     cnt.textContent = totalIssue
-      ? ('发现 ' + totalIssue + ' 处可优化：' + zero.length + ' 条疑似无效 · ' + wide.length + ' 条可能过宽')
+      ? ('发现 ' + totalIssue + ' 处可优化：' + zero.length + ' 条疑似无效 · ' + wide.length + ' 条可能过宽 · ' + corpusDead.length + ' 条样本集从未命中')
       : '没有发现明显问题';
   }
 
@@ -2444,6 +2466,23 @@ function renderAudit() {
         '<td><span class="chip" style="background:rgba(255,77,109,.18);color:#ffb3c1">' +
         w.im.n + ' / ' + w.im.total + '（' + Math.round(w.im.ratio * 100) + '%）</span></td>' +
         '<td><span class="alias">' + esc(sameTypeSamples(r, 4).join(' · ') || '—') + '</span></td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+  if (corpusDead.length) {
+    html += '<div class="tip" style="margin-top:14px;border-left:3px solid #ff4d6d;padding-left:8px">' +
+      '以下 <b>' + corpusDead.length + '</b> 条启用超过 7 天、且发现库里完全匹配不到任何同名条目。' +
+      '这比单纯「0 命中」更确定 —— 不是「题材刷得少」，而是<b>规则本身写错 / 作用域不对 / 别名没补全</b>，' +
+      '真实浏览时也不可能生效。建议改写法或补别名，而非直接删。</div>' +
+      '<table><thead><tr><th style="width:130px">规则</th><th style="width:74px">类型</th>' +
+      '<th>可能的原因 / 建议</th></tr></thead><tbody>';
+    corpusDead.slice(0, 40).forEach(function (r) {
+      var why = explainZeroHit(r);
+      html += '<tr><td><span class="val">' + esc(r.value || '（纯表达式）') + '</span>' +
+        (r.expr ? '<br><span class="alias">⚙ ' + esc(r.expr) + '</span>' : '') + '</td>' +
+        '<td><span class="chip type">' + esc(TYPE_LABEL[r.type] || r.type) + '</span></td>' +
+        '<td><span class="alias">' + esc(why.length ? why.join('；') : '发现库有同类实体却完全匹配不到，最可能是女优名写法/罗马音不一致') + '</span>' +
+        ' <button class="mini" data-auditfix="' + esc(r.id) + '">改到规则库</button></td></tr>';
     });
     html += '</tbody></table>';
   }
@@ -2516,23 +2555,13 @@ function simHits(r, disc) {
     // 番号/标题词：发现库里没有对应的条目维度（发现库只存 女优/标签/片商/系列/导演）
     return { keys: [], total: 0, skip: '发现库不含该维度数据' };
   }
-  var v = String(r.value || '').toLowerCase().trim();
-  if (!v) return { keys: [], total: 0, skip: '规则没有主体词' };
-  var aliases = (r.aliases || []).map(function (a) { return String(a || '').toLowerCase().trim(); })
-    .filter(function (a) { return a; });
-  var needles = [v].concat(aliases);
+  if (!(window.SF_RULECHECK && SF_RULECHECK.matchEntity)) return { keys: [], total: 0, skip: '匹配引擎未加载' };
   Object.keys(disc).forEach(function (k) {
     var it = disc[k] || {};
     if ((it.type || '') !== t) return;
     out.total++;
-    var hay = String(it.v || '').toLowerCase();
-    // match 语义与 content.js 保持一致：contains 子串 / exact 全等 / regex 正则
-    var hit = false;
-    if (r.match === 'exact') hit = needles.indexOf(hay) !== -1;
-    else if (r.match === 'regex') {
-      try { var re = new RegExp(v); hit = re.test(String(it.v || '')); } catch (e) { hit = false; }
-    } else hit = needles.some(function (n) { return hay.indexOf(n) !== -1; });
-    if (hit) out.keys.push(k);
+    // 与规则体检共用同一份匹配口径（收口在 rulecheck.js::matchEntity）
+    if (SF_RULECHECK.matchEntity(r, String(it.v || ''), r.scope || 'all')) out.keys.push(k);
   });
   return out;
 }

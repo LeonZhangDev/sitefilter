@@ -59,6 +59,26 @@
   （content/background/options）同步加了 `magnetAction`。`_test_magnet.js` 新增 8 项断言
   （both 模式按钮出现 + 点击生成 magnet 锚点 + 一次性提示；open 模式仅「打开」无「复制」；默认 copy 无「打开」）。
 
+### 深化（规则体检 / 影响面预演）
+
+- **把规则匹配口径收口到单一模块 `rulecheck.js`**：`matchEntity(rule, name, scope)` 与
+  `ruleImpact(rule, discovered)` 只在此定义，options 页的「规则体检」(`ruleImpact`) 与
+  「影响面预演」(`simHits`) 都改用它。此前两者各写一套，`影响面预演` 正确识别了
+  `match`(exact/regex)/`aliases`/`scope`，而`规则体检` 用 `indexOf` 子串、把后三者全忽略 ——
+  一条正则/精确/别名规则在体检里会被**误判为死规则**（命中 0），与预演结果打架。
+- **修了一个真实的匹配 bug（顺带）**：`content.js::matchRule` 只把规则值转小写、**没把卡片文本转小写**，
+  导致拉丁字母规则（如 `Mikami`）匹配不到卡片里的 `Mikami Yua`（首字母大写）—— 静默漏匹配。
+  现在 hay 也 `toLowerCase()`，与 `simHits` / `matchEntity` 口径统一。这一步靠
+  `_test_rulecheck.js` 用 `window.__sfHook.matchRule` 与 `rulecheck.js.matchEntity` 做
+  **一致性交叉验证**才暴露，两个函数对 9 组用例必须同进同出。
+- **新增「语料库死规则」检测器**：发现库是该用户**真实历史**语义下最贴近离线语料的样本。
+  一条规则若 `type` 在发现库里**有同类条目、却一条都不命中**，且它不是 `expr/code/keyword`
+  这类发现库不含该维度的规则 → 标记为「疑似无效（语料库无一命中）」，比原来的「零命中」更准：
+  原来有命中历史但新样本没命中的也能识别，且不再误伤 `code`/`keyword` 规则。
+- `rulecheck.js` 经 `options.html` 的 `<script>` 与 `manifest.json` 的 content_scripts 共同引入，
+  不新增权限。`_test_rulecheck.js`（17 项）单测 `matchEntity` 含 exact/regex/contains/aliases/scope，
+  并交叉验证 `matchRule` 与之完全一致。门禁 19 套 / 1040 断言（原 18 套 / 1023，+17）。
+
 ### 新增功能
 
 - **磁力链接完整字段解析**：`parseMagnet()` 解析 `xt`（v1/v2 + hash 长度）、`dn`、

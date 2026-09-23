@@ -1287,7 +1287,10 @@
     }
 
     var scope = rule.scope || 'all';
-    var hay = ctx[scope] != null ? ctx[scope] : ctx.all;
+    // 关键：hay 也必须小写，否则「Mikami」规则匹配不到卡片里的「Mikami Yua」（首字母大写）。
+    // 此前只把规则值小写、卡片文本不小写，导致拉丁字母规则大小写敏感 —— 静默漏匹配。
+    var hayRaw = ctx[scope] != null ? ctx[scope] : ctx.all;
+    var hay = String(hayRaw == null ? '' : hayRaw).toLowerCase();
     var vals = ruleValues(rule);
     var mode = rule.match || 'contains';
 
@@ -4741,6 +4744,7 @@
         magnetRank: magnetRank,
         buildMagnetRaw: buildMagnetRaw,
         decodeObfuscated: decodeObfuscated,
+        matchRule: matchRule,
         probeLinks: probeLinks,
         dlLinks: function () { return dlLinks; },
         stats: function () { return stats; }
