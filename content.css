@@ -17,6 +17,22 @@
   visibility: hidden !important;
 }
 
+/* 「显示被隐藏」临时揭示态：给 <html> 挂 .cf-reveal 时，被屏蔽的卡片重新可见。
+   屏蔽默认是"看不见"（hide 档 display:none、placeholder 档 visibility:hidden），
+   用户久了会怀疑"是不是误杀了 / 我是不是看漏了"。揭示态把被屏蔽的卡片以
+   半透明 + 虚线红框重新显示，形状位置照旧，一眼看清"这里原本有什么"。
+   这是纯视图态：不改规则、不落存储、不影响 stats 计数；再点一次即恢复。
+   选择器 html.cf-reveal .cf-blocked 的特异性(0,2,1) 高于 .cf-blocked.cf-placeholder(0,2,0)，
+   所以能盖过 placeholder 档的 visibility:hidden（两者都带 !important 时比特异性）。 */
+html.cf-reveal .cf-blocked {
+  display: revert !important;
+  visibility: visible !important;
+  opacity: 0.38 !important;
+  outline: 2px dashed rgba(255, 77, 109, 0.85) !important;
+  outline-offset: 2px !important;
+  border-radius: 6px !important;
+}
+
 /* 收藏：金星描边 */
 .cf-fav {
   position: relative !important;

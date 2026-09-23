@@ -110,9 +110,17 @@ function backgroundHarness(seed) {
   h.chrome.notifications.onClicked = notificationClick;
   const context = { chrome: h.chrome, console, setTimeout, clearTimeout, Date, Promise };
   context.globalThis = context;
+  // background.js 通过 importScripts 载入同目录模块。这里按名从磁盘取，
+  // 不再硬编码单个白名单 —— 否则每次 background 多挂一个模块（如 magnet-native.js）
+  // 这个桩就会抛「unexpected import」，把门禁染红（且失败不计入 FAIL 计数，很难查）。
+  // 仍然只允许 __dirname 下的 .js，防止测试真的去拉外部脚本。
   context.importScripts = name => {
-    if (name !== 'collector-native.js') throw new Error('unexpected import');
-    vm.runInContext(bridgeCode, context, { filename: name });
+    if (typeof name !== 'string' || !/^[\w.-]+\.js$/.test(name)) {
+      throw new Error('unexpected import: ' + name);
+    }
+    const file = path.join(__dirname, name);
+    if (!fs.existsSync(file)) throw new Error('unexpected import: ' + name);
+    vm.runInContext(fs.readFileSync(file, 'utf8'), context, { filename: name });
   };
   vm.createContext(context);
   vm.runInContext(backgroundCode, context, { filename: 'background.js' });

@@ -66,6 +66,7 @@ function build(blockDisplay, extra) {
   };
   if (blockDisplay != null) store['sf_data_v1'].settings.blockDisplay = blockDisplay;
   if (extra.legacySoftBlock != null) store['sf_data_v1'].settings.softBlock = extra.legacySoftBlock;
+  if (extra.noRules) store['sf_data_v1'].rules = [];   // 验证「无屏蔽时揭示按钮不出现」
   // 允许测试注入 settings 覆盖（用于预览模式 / 放行时长场景）
   Object.assign(store['sf_data_v1'].settings, extra.settings || {});
   win.chrome = {
@@ -264,6 +265,42 @@ function stateOf(el) {
     const a = cardOf(win.document, 'ABC-001');
     check('[时长] 有效期 24h 时，2h 前的放行仍生效 → 卡片放行',
       !a.classList.contains('cf-soft') && a.classList.contains('cf-peek'));
+  }
+
+  /* ================= 阶段七：显示被隐藏（.cf-reveal 临时揭示） ================= */
+  {
+    const { win } = build('hide');
+    await sleep(600);
+    const doc = win.document;
+    const host = doc.querySelector('.cf-host');
+    const sr = host && host.shadowRoot;
+    const html = doc.documentElement;
+    const click = el => el.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+
+    const btn = sr && sr.querySelector('[data-act="revealHidden"]');
+    check('[揭示] 有屏蔽时出现「显示被隐藏」按钮', !!btn);
+    check('[揭示] 初始 <html> 不带 cf-reveal（默认不揭示）', !html.classList.contains('cf-reveal'));
+    check('[揭示] 按钮文案含屏蔽计数', !!btn && /显示被隐藏（2）/.test(btn.textContent));
+
+    click(btn);
+    check('[揭示] 点击后 <html> 挂上 cf-reveal', html.classList.contains('cf-reveal'));
+    check('[揭示] 按钮文案切换为「恢复隐藏」', /恢复隐藏/.test(btn.textContent));
+    // 揭示是纯视图态：卡片仍带 cf-blocked（下游统计/调试器读它），可见性交给 CSS 覆写
+    check('[揭示] 揭示不改卡片标记（仍带 cf-blocked，交给 CSS 覆写可见性）',
+      cardOf(doc, 'ABC-001').classList.contains('cf-blocked'));
+    check('[揭示] 揭示不改 stats 计数（屏蔽数仍为 2）', /屏蔽 <b>2<\/b>/.test(sr.getElementById('stats').innerHTML));
+
+    click(btn);
+    check('[揭示] 再点一次摘掉 cf-reveal（恢复默认）', !html.classList.contains('cf-reveal'));
+    check('[揭示] 按钮文案复原为「显示被隐藏」', /显示被隐藏/.test(btn.textContent));
+  }
+  {
+    // 没有任何屏蔽命中时，按钮应隐藏，避免误导用户「有东西被藏起来了」
+    const { win } = build('hide', { noRules: true });
+    await sleep(600);
+    const sr = win.document.querySelector('.cf-host').shadowRoot;
+    const btn = sr.querySelector('[data-act="revealHidden"]');
+    check('[揭示] 无屏蔽命中时按钮隐藏（display:none）', !!btn && btn.style.display === 'none');
   }
 
   console.log(pass ? '\n屏蔽显示方式专项测试全部通过 ✅' : '\n屏蔽显示方式专项测试存在失败 ❌');

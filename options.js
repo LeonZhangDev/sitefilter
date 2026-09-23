@@ -24,6 +24,7 @@ var DEFAULT_SETTINGS = {
   backupKeep: 7,               // 自动备份快照轮换份数：0 = 不轮换（无限累积）
   backfill: 'off',             // 番号站数量补足：'off' / 'same' / 正整数（唯一会联网的开关）
   magnetAction: 'copy',    // 磁力行操作：'copy'（默认，仅复制）/ 'open'（仅用本机下载工具打开）/ 'both'（复制+打开）
+  magnetClient: '',        // 自定义下载器 exe 绝对路径；留空=用系统默认（Tier A），填了=经本机桥（Tier B）
   blockDisplay: 'placeholder', // 屏蔽后显示方式：'hide' 完全隐藏 / 'placeholder' 保留占位（默认）/ 'soft' 灰化遮罩
   probeLinks: true, probeMark: true, probeAnySite: true,
   hlColor: '#00e5ff', ball: { right: 24, bottom: 24 },
@@ -650,6 +651,54 @@ function renderMagnetActionSel() {
     if (MA_VALUES.indexOf(sel.value) === -1) return;
     D.settings.magnetAction = sel.value;
     save();
+  });
+}
+
+/* 自定义下载器路径（Tier B）。留空 = 用系统默认（Tier A），不需要本机桥；
+   填了 = 经本机桥（native-host/）用指定 exe 打开。扩展自身没有文件系统权限，
+   无法预先校验路径，所以「测试本机桥」是把请求发给 host，由 host 校验路径与扩展名。 */
+function renderMagnetClient() {
+  var inp = document.getElementById('magnetClientInp');
+  var btn = document.getElementById('magnetClientTest');
+  var out = document.getElementById('magnetClientNote');
+  if (!inp) return;
+  inp.value = D.settings.magnetClient || '';
+  inp.addEventListener('change', function () {
+    D.settings.magnetClient = inp.value.trim();
+    save();
+    if (out) out.textContent = D.settings.magnetClient
+      ? '已保存。点「测试本机桥」验证能否唤起（首次需先运行 native-host/install.py 并重启浏览器）。'
+      : '已清空 —— 将回退到系统默认 magnet 处理程序（不需要本机桥）。';
+  });
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    var client = inp.value.trim();
+    if (!client) {
+      if (out) out.textContent = '未填路径 —— 将用系统默认（Tier A），不需要本机桥。';
+      return;
+    }
+    D.settings.magnetClient = client;
+    save();
+    if (out) out.textContent = '正在测试本机桥…';
+    btn.disabled = true;
+    try {
+      chrome.runtime.sendMessage({ type: 'sf_magnet_ping' }, function (resp) {
+        btn.disabled = false;
+        try { void chrome.runtime.lastError; } catch (e) { }
+        if (resp && resp.ok) {
+          var r = resp.result || {};
+          if (out) out.textContent = '本机桥可用 ✔（协议 v' + (r.protocol || '?') + '，Python ' + (r.python || '?') +
+            '）。现在磁力会用你指定的下载器打开；本机桥失败时会自动回退到系统默认。';
+        } else {
+          var err = (resp && resp.error) || {};
+          if (out) out.textContent = '本机桥不可用 ✘ ' + (err.message || '未知错误') +
+            ' —— 请先运行 native-host/install.py 并重启浏览器。';
+        }
+      });
+    } catch (e) {
+      btn.disabled = false;
+      if (out) out.textContent = '测试失败：' + ((e && e.message) || e);
+    }
   });
 }
 
@@ -3111,6 +3160,7 @@ function renderAll() {
   renderBdSel();
   renderBfSel();
   renderMagnetActionSel();
+  renderMagnetClient();
   renderColorDots();
   renderRec();
   renderSync();

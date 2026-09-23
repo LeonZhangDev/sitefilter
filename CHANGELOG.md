@@ -59,6 +59,42 @@
   （content/background/options）同步加了 `magnetAction`。`_test_magnet.js` 新增 8 项断言
   （both 模式按钮出现 + 点击生成 magnet 锚点 + 一次性提示；open 模式仅「打开」无「复制」；默认 copy 无「打开」）。
 
+### 新增（磁力交给「指定」下载器：Tier B，可选）
+
+- 上面那版只能唤起**系统默认**那一个 magnet 处理程序。想「指定用迅雷」而不是 μTorrent，
+  就得让本机一个小程序去启动那个 exe —— 这就是 Tier B，**按需启用，不开也不影响任何东西**：
+  - 设置项「指定下载器路径」：留空 = 走 Tier A（系统默认，零成本）；填了 = 扩展把磁力发给
+    本机程序，由它启动你指定的客户端。
+  - 新增 `magnet-native.js`（Native Messaging 桥，由 `background.js` 用 `importScripts` 加载）
+    + `native-host/`（`host.py` 本机程序 + `install.py` 一次性注册脚本 + 说明）。
+  - **安全边界写在本机程序里**：只接受 `magnet:?xt=urn:btih:|urn:btmh:` 且长度受限的串；
+    只放行 `open-magnet` 一个动作；`client` 必须是绝对路径、必须在可执行扩展名白名单内
+    （`.exe`/`.cmd`/`.bat`），非绝对路径或其它扩展名一律拒绝。请求经 `subprocess` 以**参数数组**
+    传参，不走 shell，杜绝注入。
+  - `_test_native_host.py`（25 项，纯标准库）把上述边界全部钉死；`_test_magnet_bridge.js`（24 项）
+    钉住桥的端口复用、超时分类、迟到/串台响应丢弃与「本机桥失败则自动降级到系统默认」。
+
+### 新增（隐藏可回溯：一键看回被屏蔽的卡片）
+
+- 面板底部新增 **「显示被隐藏（N）」**：点开后本页被屏蔽的卡片**重新出现**（虚线描边 + 半透明，
+  一眼看清「原本有什么、为什么被屏蔽」），按钮变成「恢复隐藏」，再点即回到屏蔽态。
+- 这是**纯视图态**：不改规则、不写存储；`stats` 里的屏蔽计数也不变
+  （所以「揭示」只是让你看一眼，不会让屏蔽失效或污染统计）。
+  硬屏蔽（从页面移除）与软屏蔽（灰化遮罩）两种模式都支持回溯。
+
+### 修复（打包漏文件 —— 会导致上架包直接坏掉）
+
+- **`rulecheck.js` 被 `manifest.json` 引用、却不在打包白名单里**，构建出的 zip 缺这个文件，
+  装上去内容脚本直接报错。同样的坑对新的 `magnet-native.js` 也成立。两者都已加入白名单，
+  并**新增门禁校验**：扫 `manifest.json` 的 `content_scripts` / `web_accessible_resources` /
+  `action.default_popup` / `options_page` 与 `background.js` 的 `importScripts(...)` 里引用的本地
+  文件，凡是没被白名单覆盖的**直接判失败**（已反证：把任一文件从白名单拿掉，门禁立刻变红），
+  以后不会再悄悄漏。
+- **`_test_collector_native.js` 的 `importScripts` 桩硬编码只认 `collector-native.js`**，
+  一旦 `background.js` 多挂一个模块（如 `magnet-native.js`）就在**启动期抛异常**，
+  后面的断言全部不执行 —— 而且它**不计入失败计数**（显示「通过 32 / 失败 0」却染红门禁），
+  极难查。已改成按名从磁盘加载同目录 `.js`，顺带把原本跑不到的 5 项断言解锁（32 → 37）。
+
 ### 深化（规则体检 / 影响面预演）
 
 - **把规则匹配口径收口到单一模块 `rulecheck.js`**：`matchEntity(rule, name, scope)` 与

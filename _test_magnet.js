@@ -101,7 +101,7 @@ function build(opts) {
       local: {}, sync: {},
       onChanged: { addListener() { } },
     },
-    runtime: { sendMessage() { return Promise.resolve(); }, onMessage: { addListener() { } } },
+    runtime: { sendMessage: opts.sendMessage || function () { return Promise.resolve(); }, onMessage: { addListener() { } } },
   };
   const dlGet = (k, cb) => cb({ [k]: store[k] });
   const dlSet = (o, cb) => { Object.assign(store, o); if (cb) cb(); };
@@ -415,6 +415,75 @@ const dlText = d => d.raw;
     const copies = list ? list.querySelectorAll('[data-dl]') : [];
     check('[打开] open 模式：磁力行有「打开」按钮', opens.length > 0);
     check('[打开] open 模式：不显示「复制」按钮（仅打开）', copies.length === 0);
+  }
+
+  /* Tier B：设置里填了自定义下载器 → 「打开」走本机桥（而不是系统默认） */
+  {
+    const sent = [];
+    // 桩：背景返回成功。content.js 用 sendMessage(msg, cb) 形式
+    const sendMessage = (msg, cb) => {
+      sent.push(msg);
+      if (cb) cb({ ok: true, result: { launched: true, client: 'C:\\Thunder.exe' } });
+      return Promise.resolve();
+    };
+    const { win } = build({ settings: { magnetAction: 'both', magnetClient: 'C:\\Thunder.exe' }, sendMessage });
+    await sleep(900);
+    const list = await openDownloadTab(win);
+    const opens = list ? list.querySelectorAll('[data-open]') : [];
+    check('[TierB] 填了自定义下载器时「打开」按钮仍在', opens.length > 0);
+
+    // 点「打开」→ 应发给背景（而不是造锚点唤起系统默认）
+    let anchorClicked = null;
+    const proto = win.HTMLAnchorElement.prototype;
+    const origClick = proto.click;
+    proto.click = function () { anchorClicked = this.href; };
+    try {
+      opens[0].dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    } finally {
+      proto.click = origClick;
+    }
+    await sleep(30);
+
+    const m = sent.find(x => x && x.type === 'sf_magnet_open');
+    check('[TierB] 走本机桥：发出 sf_magnet_open 消息', !!m);
+    check('[TierB] 消息里带上自定义下载器路径', !!m && m.client === 'C:\\Thunder.exe');
+    check('[TierB] 消息里带上 magnet 链接', !!m && /^magnet:/i.test(m.magnet));
+    check('[TierB] 成功时不回退去唤起系统默认（不生成锚点）', anchorClicked === null);
+    check('[TierB] 成功时不给「没装客户端」的误导提示',
+      !list.parentNode.querySelector('.cf-maghint'));
+  }
+
+  /* Tier B 失败 → 自动回退 Tier A（保证「点了总有反应」） */
+  {
+    const sent = [];
+    const sendMessage = (msg, cb) => {
+      sent.push(msg);
+      if (cb) cb({ ok: false, error: { code: 'client-not-found', message: '找不到下载器：C:\\bad.exe' } });
+      return Promise.resolve();
+    };
+    const { win } = build({ settings: { magnetAction: 'both', magnetClient: 'C:\\bad.exe' }, sendMessage });
+    await sleep(900);
+    const list = await openDownloadTab(win);
+    const opens = list ? list.querySelectorAll('[data-open]') : [];
+
+    let anchorClicked = null;
+    const proto = win.HTMLAnchorElement.prototype;
+    const origClick = proto.click;
+    proto.click = function () { anchorClicked = this.href; };
+    try {
+      opens[0].dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+      // 降级发生在 Promise 的 catch 里（异步），所以桩要保持到它跑完再撤
+      await sleep(40);
+    } finally {
+      proto.click = origClick;
+    }
+
+    check('[TierB-降级] 也先尝试了本机桥', sent.some(x => x && x.type === 'sf_magnet_open'));
+    check('[TierB-降级][回归] 本机桥失败时回退唤起系统默认（生成 magnet: 锚点）',
+      !!anchorClicked && /magnet:/i.test(anchorClicked));
+    const hint = list.parentNode.querySelector('.cf-maghint');
+    check('[TierB-降级] 面板内说明失败原因（含具体错误）',
+      !!hint && /找不到下载器/.test(hint.textContent));
   }
 
   function countOccurrences(s, sub) {

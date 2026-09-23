@@ -82,7 +82,9 @@
     backupKeep: 7,          // 自动备份快照轮换份数：0 = 不轮换（无限累积）
     backfill: 'off',        // 番号站数量补足：'off'（默认，绝不联网）/ 'same'（补齐到原始数量）/ 正整数（指定数量）
                             // ⚠ 这是全库唯一会发网络请求的开关，且仅对 JavDB580 生效（见 doBackfill 注释）
-    magnetAction: 'copy'    // 磁力行操作：'copy'（默认，仅复制）/ 'open'（仅用本机下载工具打开）/ 'both'（复制+打开）
+    magnetAction: 'copy',   // 磁力行操作：'copy'（默认，仅复制）/ 'open'（仅用本机下载工具打开）/ 'both'（复制+打开）
+    magnetClient: ''        // 自定义下载器 exe 绝对路径；留空=唤起系统默认（Tier A），
+                            // 填了=经本机桥用指定 exe 打开（Tier B，需装 native-host）
   };
 
   // 「仍然查看」放行有效期（可调：设置页「软屏蔽 → 放行有效期」）
@@ -476,6 +478,7 @@
   var currentSite = null;
   var probeMode = false;             // true = 当前页不是监管站点，仅启用链接探测
   var stats = { cards: 0, blocked: 0, fav: 0, hl: 0, dl: 0, soft: 0, preview: 0 };
+  var revealHidden = false;          // 「显示被隐藏」临时揭示态（纯视图，不落存储）
   var foundActress = new Map();   // name -> count
   var foundTag = new Map();       // name -> count
   var foundMaker = new Map();
@@ -2139,6 +2142,7 @@
       '    <button data-act="blockAll">本页女优全屏蔽</button>',
       '    <button data-act="clearAll">清空本页规则</button>',
       '    <button data-act="undo" title="撤销上一次规则修改">↶ 撤销</button>',
+      '    <button data-act="revealHidden" title="临时显示被屏蔽的卡片，看清被隐藏了什么（不改规则）">👁 显示被隐藏</button>',
       '    <button data-act="importColl" id="importColl" class="cf-imp">📥导入本页收藏</button>',
       '    <button data-act="opt">完整设置</button>',
       '  </div>',
@@ -2463,6 +2467,12 @@
       (stats.dl ? ' · 下载 <b>' + stats.dl + '</b>' : '');
     ui.ball.classList.toggle('off', !S.settings.enabled || !!S.settings.boss);
     ui.ball.classList.toggle('hot', (stats.blocked > 0 || stats.dl > 0) && S.settings.enabled && !S.settings.boss);
+    // 「显示被隐藏」按钮：无屏蔽时隐藏（避免占位与误导）；有屏蔽时显示计数并随揭示态切换文案
+    var rb = ui.sr && ui.sr.querySelector('[data-act="revealHidden"]');
+    if (rb) {
+      rb.style.display = stats.blocked ? '' : 'none';
+      rb.textContent = (revealHidden ? '🙈 恢复隐藏（' : '👁 显示被隐藏（') + stats.blocked + '）';
+    }
     updateTabBadges();
   }
 
@@ -2610,12 +2620,15 @@
 
   /* ---------------- 磁力交给本机下载工具 ----------------
    * 扩展不下载磁力（那是 P2P，得靠迅雷/μTorrent/qBittorrent 等），只负责把
-   * magnet: 交给「系统默认 magnet 协议处理程序」。做法：造一个隐形 <a> 并 click，
-   * 浏览器会把它路由给本机注册了 magnet: 的程序。无法从扩展侧探测本机是否装了
-   * 客户端，所以首次点击给一次提示 —— 点了没反应就是没装 / 没设为默认。 */
+   * magnet: 交给本机下载工具。两种方式：
+   *   · Tier A（默认）：造一个隐形 <a href="magnet:"> 并 click，浏览器把它路由给
+   *     系统里**已注册的默认 magnet 处理程序**。不需要本机桥。
+   *   · Tier B（填了 magnetClient 才走）：把磁力发给本机桥，由它用**你指定的 exe** 打开。
+   *     扩展自身无法启动任意 exe，所以必须有本机桥（见 native-host/）。
+   * Tier B 失败（桥没装/路径错/超时）时**自动回退 Tier A**，保证「点了总有反应」，
+   * 同时在面板内说明失败原因。 */
   var magnetHintShown = false;
-  function openInClient(raw) {
-    if (!raw || !/^magnet:/i.test(raw)) return;
+  function openViaSystemDefault(raw) {
     try {
       var a = document.createElement('a');
       a.href = raw;
@@ -2625,17 +2638,48 @@
       a.click();
       if (a.parentNode) a.parentNode.removeChild(a);
     } catch (e) { /* 唤起失败绝不影响主流程 */ }
-    if (!magnetHintShown) { magnetHintShown = true; magnetOpenHint(); }
   }
-  function magnetOpenHint() {
+  function openViaNative(raw, client) {
+    return new Promise(function (resolve, reject) {
+      try {
+        chrome.runtime.sendMessage({ type: 'sf_magnet_open', magnet: raw, client: client }, function (resp) {
+          try { void chrome.runtime.lastError; } catch (e) { }   // 读一下，避免 "Unchecked runtime.lastError"
+          if (resp && resp.ok) resolve(resp.result || {});
+          else reject((resp && resp.error) || { code: 'no-response', message: '本机桥无响应。' });
+        });
+      } catch (e) {
+        reject({ code: 'send-failed', message: String((e && e.message) || e) });
+      }
+    });
+  }
+  function openInClient(raw) {
+    if (!raw || !/^magnet:/i.test(raw)) return;
+    var client = String((S.settings && S.settings.magnetClient) || '').trim();
+    if (!client) {
+      openViaSystemDefault(raw);
+      if (!magnetHintShown) { magnetHintShown = true; magnetOpenHint(); }
+      return;
+    }
+    openViaNative(raw, client).catch(function (err) {
+      openViaSystemDefault(raw);   // 回退：本机桥不可用时仍用系统默认打开
+      magnetOpenHint(err);
+    });
+  }
+  function magnetOpenHint(err) {
     try {
       var sr = ui && ui.host && ui.host.shadowRoot;
       var bar = sr && sr.querySelector('.cf-dlbar');
-      if (!bar || bar.parentNode.querySelector('.cf-maghint')) return;
+      if (!bar || !bar.parentNode) return;
+      var prev = bar.parentNode.querySelector('.cf-maghint');
+      // 通用提示只给一次；失败提示每次都更新（用户需要看到具体原因）
+      if (prev && !err) return;
+      if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
       var tip = document.createElement('div');
       tip.className = 'cf-maghint cf-tip';
       tip.style.cssText = 'margin-top:6px;color:#ffd27f';
-      tip.textContent = '已尝试用本机下载工具打开；若没反应，请确认已安装迅雷/μTorrent/qBittorrent 并设为系统默认 magnet 处理程序。';
+      tip.textContent = (err && err.message)
+        ? ('自定义下载器没打开（' + err.message + '），已回退到系统默认 magnet 处理程序。')
+        : '已尝试用本机下载工具打开；若没反应，请确认已安装迅雷/μTorrent/qBittorrent 并设为系统默认 magnet 处理程序。';
       bar.parentNode.insertBefore(tip, bar.nextSibling);
     } catch (e) { }
   }
@@ -3510,10 +3554,27 @@
     setTimeout(renderRecommend, 60);
   }
 
+  /* 「显示被隐藏」：给 <html> 挂/摘 .cf-reveal。
+     屏蔽默认让卡片彻底看不见（hide/placeholder 两档），用户时间久了会怀疑
+     「是不是误杀了、我是不是漏看了」。揭示态把被屏蔽的卡片以半透明虚线红框
+     重新显示，形状位置照旧；纯视图态，不动规则、不落存储、不改 stats 计数。
+     新的一轮 pass 会重建卡片，但 .cf-reveal 挂在 <html> 上，所以揭示态会保持。 */
+  function toggleRevealHidden() {
+    revealHidden = !revealHidden;
+    try { document.documentElement.classList.toggle('cf-reveal', revealHidden); } catch (e) { }
+    // 就地更新按钮文案（避免整页重渲染）
+    try {
+      var btn = ui && ui.sr && ui.sr.querySelector('[data-act="revealHidden"]');
+      if (btn) btn.textContent = revealHidden ? '🙈 恢复隐藏（' + stats.blocked + '）' : '👁 显示被隐藏（' + stats.blocked + '）';
+    } catch (e) { }
+    flashBall(revealHidden ? '揭示' : '恢复');
+  }
+
   function handleAct(act) {
     if (act === 'close') { togglePanel(false); return; }
     if (act === 'opt') { try { chrome.runtime.sendMessage({ type: 'sf_open_options' }); } catch (e) { } return; }
     if (act === 'lock') { toggleBallLock(); return; }
+    if (act === 'revealHidden') { toggleRevealHidden(); return; }
     if (act === 'onboardClose') { S.settings.onboarded = true; saveSettings(); renderOnboard(); return; }
     if (act === 'flClear') {
       if (ui.flRating) ui.flRating.value = '';

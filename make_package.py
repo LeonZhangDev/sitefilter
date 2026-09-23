@@ -43,7 +43,9 @@ INCLUDE_FILES = [
     'manifest.json',
     'background.js',
     'collector-native.js',
+    'magnet-native.js',
     'expr.js',
+    'rulecheck.js',
     'content.js',
     'xchina-download.js',
     'content.css',
@@ -61,7 +63,7 @@ EXCLUDE_RE = re.compile(r'(^|[\\/])(_|test|tests|dist|\.git|node_modules|.*\.py$
 # 语法检查覆盖的 JS（含测试，测试写坏了也是问题）
 JS_FILES = [
     'manifest.json',   # 单独 json 校验
-    'expr.js', 'content.js', 'xchina-download.js', 'background.js', 'collector-native.js', 'popup.js', 'options.js',
+    'expr.js', 'rulecheck.js', 'content.js', 'xchina-download.js', 'background.js', 'collector-native.js', 'magnet-native.js', 'popup.js', 'options.js',
 ]
 
 
@@ -135,6 +137,15 @@ def test_suites():
     return names
 
 
+def py_test_suites():
+    """Python 侧测试套件：_test_*.py（当前用于 native-host/host.py 的安全边界测试）。
+
+    与 JS 套件同一套约定：stdout 上打 PASS/FAIL，末行给结论，exit 0 = 通过。
+    这样 JS/Python 两类用例能合并进同一个门禁计数，不用记两套命令。
+    """
+    return sorted(n for n in os.listdir(HERE) if re.match(r'^_test_.*\.py$', n))
+
+
 def sha256(path, n=16):
     h = hashlib.sha256()
     with open(path, 'rb') as f:
@@ -187,23 +198,39 @@ def run_tests(quiet=False):
         return False, ['没找到任何测试套件（_smoke.js / _test_*.js）'], {}
 
     lines, npass, nfail, failed = [], 0, 0, []
-    for s in suites:
-        code, out = run([node, s], env=env)
+    jobs = [(s, [node, s], env) for s in suites]
+    for s, argv, e in jobs:
+        code, out = run(argv, env=e)
         p = len(re.findall(r'^PASS', out, re.M))
         f = len(re.findall(r'^FAIL', out, re.M))
         npass += p
         nfail += f
         ok = (code == 0 and f == 0)
-        lines.append('  %-18s %s  通过 %3d  失败 %d' % (s, '✅' if ok else '❌', p, f))
+        lines.append('  %-26s %s  通过 %3d  失败 %d' % (s, '✅' if ok else '❌', p, f))
         if not ok:
             failed.append(s)
             for ln in out.splitlines():
                 if ln.startswith('FAIL'):
                     lines.append('        ' + ln)
+    # Python 套件（native host 等）走同一个计数口径
+    for s in py_test_suites():
+        code, out = run([sys.executable, s])
+        p = len(re.findall(r'^PASS', out, re.M))
+        f = len(re.findall(r'^FAIL', out, re.M))
+        npass += p
+        nfail += f
+        ok = (code == 0 and f == 0)
+        lines.append('  %-26s %s  通过 %3d  失败 %d' % (s, '✅' if ok else '❌', p, f))
+        if not ok:
+            failed.append(s)
+            for ln in out.splitlines():
+                if ln.startswith('FAIL'):
+                    lines.append('        ' + ln)
+    total_suites = len(jobs) + len(py_test_suites())
     log('\n测试套件：', quiet)
     for ln in lines:
         log(ln, quiet)
-    summary = {'suites': len(suites), 'passed': npass, 'failed': nfail,
+    summary = {'suites': total_suites, 'passed': npass, 'failed': nfail,
                'failedSuites': failed}
     return (not failed), failed, summary
 
@@ -296,6 +323,60 @@ def check_manifest(m):
     for name in INCLUDE_FILES:
         if not os.path.exists(os.path.join(HERE, name)):
             warnings.append('白名单文件缺失（不会进包）：%s' % name)
+
+    # manifest 引用的每个文件都必须**真的进包**。
+    # 这条是补丁：rulecheck.js 曾进了 manifest.json 的 content_scripts，
+    # 却没进 INCLUDE_FILES —— 打出来的 zip 缺文件、扩展一加载就坏，而门禁当时全绿。
+    # 光校验"文件存在磁盘上"不够，必须校验"会被打进包"。
+    packaged = set(n.replace('\\', '/') for n in INCLUDE_FILES)
+    for d in INCLUDE_DIRS:
+        root = os.path.join(HERE, d)
+        if not os.path.isdir(root):
+            continue
+        for base, _dirs, names in os.walk(root):
+            for n in names:
+                rel = os.path.relpath(os.path.join(base, n), HERE).replace('\\', '/')
+                if not EXCLUDE_RE.search(rel):
+                    packaged.add(rel)
+
+    refs = []
+    for cs in m.get('content_scripts', []):
+        refs += list(cs.get('js', [])) + list(cs.get('css', []))
+    if m.get('background', {}).get('service_worker'):
+        refs.append(m['background']['service_worker'])
+    for key in ('action', 'options_ui', 'options_page'):
+        v = m.get(key)
+        if isinstance(v, dict):
+            page = v.get('default_popup') or v.get('page')
+            if page:
+                refs.append(page)
+        elif isinstance(v, str):
+            refs.append(v)
+    refs += list((m.get('icons') or {}).values())
+    # web_accessible_resources：页面/其它扩展可通过 chrome-extension:// 直接取用的资源，
+    # 漏了不会立刻报错（取决于谁在用），但一样是"manifest 引用了包内却不存在"。
+    for war in (m.get('web_accessible_resources') or []):
+        if isinstance(war, dict):
+            refs += list(war.get('resources') or [])
+        elif isinstance(war, str):
+            refs.append(war)
+    for rel in refs:
+        rel = str(rel).replace('\\', '/')
+        if rel not in packaged:
+            problems.append('manifest 引用的文件不在打包白名单里（打出来的包会缺它）：%s' % rel)
+
+    # background 的 importScripts 引用的脚本同样必须进包 ——
+    # 这是第二处容易漏的地方（新加一个后台模块，忘记加白名单，打包照样绿）。
+    bg = m.get('background', {}).get('service_worker')
+    if bg and os.path.exists(os.path.join(HERE, bg)):
+        try:
+            bg_src = io.open(os.path.join(HERE, bg), encoding='utf-8').read()
+            for imp in re.findall(r"importScripts\(\s*['\"]([^'\"]+)['\"]\s*\)", bg_src):
+                imp = imp.replace('\\', '/')
+                if imp not in packaged:
+                    problems.append('background.js importScripts 的脚本不在打包白名单里：%s' % imp)
+        except Exception as e:
+            warnings.append('读取 background.js 检查 importScripts 失败：%s' % e)
 
     # 权限提示
     perms = m.get('permissions') or []

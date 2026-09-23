@@ -365,6 +365,22 @@
     </div>
 
     <div class="card">
+      <h2>自定义下载器 <small>可选：指定用某个下载器打开磁力（不用系统默认）</small></h2>
+      <div class="grid" style="align-items:center;gap:8px">
+        <input id="magnetClientInp" type="text" spellcheck="false"
+               placeholder="留空=用系统默认；或填下载器 exe 的绝对路径，如 C:\Program Files\Thunder\Thunder.exe"
+               style="width:100%;padding:7px 10px;border-radius:7px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.25);color:inherit">
+        <button id="magnetClientTest" style="padding:7px 14px;white-space:nowrap">测试本机桥</button>
+      </div>
+      <div class="tip" id="magnetClientNote">
+        <b>留空 = 用默认（推荐，零配置）</b>：走系统默认 magnet 处理程序，<b>不需要</b>装本机桥。<br>
+        填了路径 = 走<b>本机桥</b>用你指定的下载器打开。浏览器扩展无法自己启动任意 exe，所以要装一个小程序：
+        在扩展目录下运行 <code>python native-host/install.py</code> 并<b>重启浏览器</b>（详见 <code>native-host/README.md</code>）。
+        路径必须是绝对路径、且是 <code>.exe/.com/.bat/.cmd/.lnk</code>。
+      </div>
+    </div>
+
+    <div class="card">
       <h2>默认高亮颜色</h2>
       <div class="grid" id="hlDots"></div>
     </div>

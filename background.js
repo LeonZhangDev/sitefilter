@@ -4,7 +4,10 @@
  * ============================================================= */
 'use strict';
 
-if (typeof importScripts === 'function') importScripts('collector-native.js');
+if (typeof importScripts === 'function') {
+  importScripts('collector-native.js');
+  importScripts('magnet-native.js');
+}
 
 var DATA_KEY = 'sf_data_v1';
 var SCHEMA_VERSION = 6;   // 与 content.js / options.js 保持一致
@@ -52,6 +55,8 @@ var DEFAULT_SETTINGS = {
   backupKeep: 7,               // 自动备份快照轮换份数：0 = 不轮换（无限累积）
   backfill: 'off',             // 番号站数量补足（唯一会联网的开关，仅 JavDB580 生效）
   magnetAction: 'copy',    // 磁力行操作：'copy'（默认，仅复制）/ 'open'（仅用本机下载工具打开）/ 'both'（复制+打开）
+  magnetClient: '',        // 自定义下载器 exe 绝对路径；留空=用系统默认（Tier A），
+                           // 填了=经本机桥用指定 exe 打开（Tier B，需装 native-host）
   hlColor: '#00e5ff',
   ball: { right: 24, bottom: 24 },
   ballLock: false
@@ -713,6 +718,18 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
       sendResponse({ ok: true, result: result });
     }).catch(function (e) {
       sendResponse({ ok: false, error: { code: e.code || 'collector-error', message: e.message || 'Collector 请求失败。', retriable: !!e.retriable } });
+    });
+    return true;
+  }
+  // 自定义下载器本机桥（Tier B）：content script 没法直接用 connectNative，必须经后台转发
+  if (msg.type === 'sf_magnet_open' || msg.type === 'sf_magnet_ping') {
+    var call = msg.type === 'sf_magnet_open'
+      ? SiteFilterMagnetBridge.openMagnet(msg.magnet, msg.client)
+      : SiteFilterMagnetBridge.ping();
+    call.then(function (result) {
+      sendResponse({ ok: true, result: result });
+    }).catch(function (e) {
+      sendResponse({ ok: false, error: { code: e.code || 'magnet-bridge-error', message: e.message || '本机下载器桥失败。', retriable: !!e.retriable } });
     });
     return true;
   }
