@@ -13,7 +13,7 @@ const { JSDOM } = require('jsdom');
 const vm = require('vm');
 
 const EXT = 'C:\\Users\\admin\\Desktop\\site-filter';
-const code = fs.readFileSync(path.join(EXT, 'content.js'), 'utf8');
+const code = require('./_load').contentBundle();
 
 let pass = true;
 const check = (name, cond) => { console.log((cond ? 'PASS  ' : 'FAIL  ') + name); if (!cond) pass = false; };
@@ -81,7 +81,6 @@ function build(opts) {
     },
     runtime: { sendMessage() { return Promise.resolve(); }, onMessage: { addListener() { } } },
   };
-  win.eval(fs.readFileSync(path.join(EXT, 'expr.js'), 'utf8'));
   win.eval(code);
   return { win, store, dom };
 }

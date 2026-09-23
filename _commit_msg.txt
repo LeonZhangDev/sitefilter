@@ -1,0 +1,24 @@
+refactor(content): 抽出 magnet-core.js —— 磁力/下载链接解析层独立成模块（纯函数）
+
+content.js 4866 → 4633 行。搬走的是「链接串 ⇒ 结构化数据」这一层：
+L2 全字段解析（parseMagnet，xl 优先于 DOM 文本）、L3 反混淆（decodeObfuscated
+的零宽/实体/百分号/base64/裸 hash 五种形态）、体积与画质格式化、同 infohash
+归并（mergeMagnet）与 L4 分层排序（magnetRank / sortLinks）。
+
+边界有意划在「纯」上：扫 DOM、装配结果集、页面打标记（probeLinks）仍留在
+content.js；模块只依赖 URL 与 atob，不碰 document / chrome.storage / UI 状态，
+因此可被 Node 直接 require 单测 —— 这一点由新的 _test_assembly.js 钉死。
+
+搬迁用脚本按行号原样切片，并逐字节校验：magnet 正则里含**字面零宽字符**
+（2×U+200B / 4×U+FEFF），手抄必丢 —— 而丢了只表现为「某些站解不出来」的静默失效，
+不会有任何报错。
+
+同时给「装配关系」补上护栏（新增 _test_assembly.js，11 项）：
+  · _load.js 的顺序必须等于 manifest 的 content_scripts 顺序；
+  · 共享模块必须排在 content.js 之前（顺序错 = 加载期 ReferenceError）；
+  · 打包白名单覆盖 manifest / importScripts 的每个引用（rulecheck.js 曾漏配过）；
+  · 没有测例再绕过 _load.js 直接 eval content.js 源码
+   （防「新模块没被加载，测例悄悄少测一层」这类静默退化）。
+
+测试加载方式统一改走 _load.js（按 manifest 顺序拼接），11 个测例不再各自硬编码文件名。
+门禁：22 套 / 1127 项断言全绿（原 21 套 / 1116）。

@@ -10,9 +10,10 @@ const path = require('path');
 const { JSDOM } = require('jsdom');
 
 const EXT = 'C:\\Users\\admin\\Desktop\\site-filter';
-const code = fs.readFileSync(path.join(EXT, 'content.js'), 'utf8');
-const exprCode = fs.readFileSync(path.join(EXT, 'expr.js'), 'utf8');
+const code = fs.readFileSync(path.join(EXT, 'content.js'), 'utf8');   // 只读 content.js：源码守卫断言不该被别的文件蒙对
 const E = require(path.join(EXT, 'expr.js'));
+// bundle 含 expr.js：与浏览器一致，整包注入
+const bundle = require('./_load').contentBundle();
 
 let pass = true;
 const check = (name, cond) => { console.log((cond ? 'PASS  ' : 'FAIL  ') + name); if (!cond) pass = false; };
@@ -205,8 +206,7 @@ function build(rules, settings) {
     },
     runtime: { sendMessage() { return Promise.resolve(); }, onMessage: { addListener() { } } },
   };
-  win.eval(exprCode);
-  win.eval(code);
+  win.eval(bundle);
   return { win, store };
 }
 

@@ -22,8 +22,8 @@ const path = require('path');
 const { JSDOM } = require('jsdom');
 
 const EXT = 'C:\\Users\\admin\\Desktop\\site-filter';
-const code = fs.readFileSync(path.join(EXT, 'content.js'), 'utf8');
-const exprCode = fs.readFileSync(path.join(EXT, 'expr.js'), 'utf8');
+const code = fs.readFileSync(path.join(EXT, 'content.js'), 'utf8');   // 只读 content.js：源码守卫断言不该被别的文件蒙对
+const bundle = require('./_load').contentBundle();
 
 /* 种子数据：故意塞进两个"不在 saveState 默认列表里"的字段
    —— recSettings（真实字段，历史上就是它最容易被冲掉）和 __sentinel（哨兵，任何写回都不该动它）。 */
@@ -93,8 +93,7 @@ win.chrome = {
   },
   runtime: { sendMessage() { return Promise.resolve(); }, onMessage: { addListener() { } } },
 };
-win.eval(exprCode);
-win.eval(code);
+win.eval(bundle);
 
 let pass = true;
 const check = (name, cond) => { console.log((cond ? 'PASS  ' : 'FAIL  ') + name); if (!cond) pass = false; };

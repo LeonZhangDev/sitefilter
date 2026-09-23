@@ -22,7 +22,7 @@ const vm = require('vm');
 const { JSDOM } = require('jsdom');
 
 const EXT = 'C:\\Users\\admin\\Desktop\\site-filter';
-const code = fs.readFileSync(path.join(EXT, 'content.js'), 'utf8');
+const code = require('./_load').contentBundle();
 
 let pass = true;
 const check = (name, cond) => { console.log((cond ? 'PASS  ' : 'FAIL  ') + name); if (!cond) pass = false; };
@@ -141,8 +141,7 @@ function build(opts) {
   // 显式打开只读测试钩子
   win.__siteFilterTestApi = 'magnet-only';
   vm.createContext(sandbox);
-  vm.runInContext(fs.readFileSync(path.join(EXT, 'expr.js'), 'utf8'), sandbox, { filename: 'expr.js' });
-  vm.runInContext(code, sandbox, { filename: 'content.js' });
+  vm.runInContext(code, sandbox, { filename: 'content-bundle' });
   return { win, store, sandbox };
 }
 

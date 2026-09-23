@@ -156,8 +156,8 @@ function backgroundHarness(seed) {
     const missing = refs.filter(r => !whitelist.has(r.replace(/\\/g, '/')));
     check('打包白名单覆盖所有 manifest/importScripts 引用的文件', missing.length === 0);
     if (missing.length) console.log('        漏配：' + missing.join(', '));
-    check('打包白名单确实含 rulecheck.js 与 magnet-native.js',
-      whitelist.has('rulecheck.js') && whitelist.has('magnet-native.js'));
+    check('打包白名单确实含 rulecheck.js / magnet-core.js 与 magnet-native.js',
+      whitelist.has('rulecheck.js') && whitelist.has('magnet-core.js') && whitelist.has('magnet-native.js'));
   }
 
   const h1 = harness();

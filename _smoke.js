@@ -4,7 +4,7 @@ const path = require('path');
 const { JSDOM } = require('jsdom');
 
 const EXT = 'C:\\Users\\admin\\Desktop\\site-filter';
-const code = fs.readFileSync(path.join(EXT, 'content.js'), 'utf8');
+const code = require('./_load').contentBundle();
 
 function card(code_, star, genre, maker, series) {
   return `<div class="item">
@@ -120,8 +120,7 @@ win.chrome = {
   runtime: { sendMessage() { return Promise.resolve(); }, onMessage: { addListener() { } } },
 };
 
-// 与真实 content script 一致：先加载共享的表达式引擎，再加载 content.js
-win.eval(fs.readFileSync(path.join(EXT, 'expr.js'), 'utf8'));
+// 与真实 content script 一致：按 manifest 声明的顺序整体注入（见 _load.js）
 win.eval(code);
 
 setTimeout(() => {

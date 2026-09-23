@@ -13,9 +13,7 @@ const vm = require('vm');
 const { JSDOM } = require('jsdom');
 
 const EXT = 'C:\\Users\\admin\\Desktop\\site-filter';
-const contentCode = fs.readFileSync(path.join(EXT, 'content.js'), 'utf8');
-const rulecheckCode = fs.readFileSync(path.join(EXT, 'rulecheck.js'), 'utf8');
-const exprCode = fs.readFileSync(path.join(EXT, 'expr.js'), 'utf8');
+const contentCode = require('./_load').contentBundle();   // 整包注入：与浏览器一致
 
 let pass = true;
 const check = (name, cond) => { console.log((cond ? 'PASS  ' : 'FAIL  ') + name); if (!cond) pass = false; };
@@ -73,9 +71,7 @@ function build() {
   sandbox.globalThis = sandbox;
   win.__siteFilterTestApi = 'magnet-only';
   vm.createContext(sandbox);
-  vm.runInContext(exprCode, sandbox, { filename: 'expr.js' });
-  vm.runInContext(rulecheckCode, sandbox, { filename: 'rulecheck.js' });
-  vm.runInContext(contentCode, sandbox, { filename: 'content.js' });
+  vm.runInContext(contentCode, sandbox, { filename: 'content-bundle' });
   return { win, sandbox };
 }
 
