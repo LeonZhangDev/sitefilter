@@ -138,6 +138,28 @@ function backgroundHarness(seed) {
   const packager = fs.readFileSync(path.join(__dirname, 'make_package.py'), 'utf8');
   check('packager includes transport in whitelist and syntax checks', (packager.match(/'collector-native\.js'/g) || []).length >= 2);
 
+  // 回归防线：打包白名单必须覆盖 manifest / background 引用到的每一个本地文件。
+  // 背景：rulecheck.js 曾被 manifest.json 的 content_scripts 引用却漏在白名单外，
+  // 打出的 zip 缺文件、扩展一加载就坏，而当时门禁是全绿的（make_package 现已有
+  // 同样的校验，这里再钉一道，防止有人把那条校验改掉）。
+  {
+    const block = packager.slice(packager.indexOf('INCLUDE_FILES = ['));
+    const whitelist = new Set(
+      (block.slice(0, block.indexOf(']')).match(/'([^']+)'/g) || []).map(s => s.slice(1, -1))
+    );
+    const refs = [];
+    for (const cs of manifest.content_scripts || []) {
+      refs.push(...(cs.js || []), ...(cs.css || []));
+    }
+    const bg = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
+    for (const m of bg.matchAll(/importScripts\(\s*['"]([^'"]+)['"]\s*\)/g)) refs.push(m[1]);
+    const missing = refs.filter(r => !whitelist.has(r.replace(/\\/g, '/')));
+    check('打包白名单覆盖所有 manifest/importScripts 引用的文件', missing.length === 0);
+    if (missing.length) console.log('        漏配：' + missing.join(', '));
+    check('打包白名单确实含 rulecheck.js 与 magnet-native.js',
+      whitelist.has('rulecheck.js') && whitelist.has('magnet-native.js'));
+  }
+
   const h1 = harness();
   const a = h1.bridge.request('ping', {}, 100);
   const b = h1.bridge.request('get-task', { task_id: 7 }, 100);

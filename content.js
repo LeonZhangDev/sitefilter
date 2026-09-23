@@ -164,7 +164,10 @@
    *   search   番号搜索 URL 模板（{q} 为番号占位）；有值才进多站直达
    *   code     是否番号体系（false 时只从标题里猜番号，不从链接路径猜）
    *   rowMode  列表是「表格行 / 无图条目」（论坛类），需要另一套识别与可见性判定
-   *   dims     该站专属的维度识别规则，先于全局 LINK_KINDS 匹配 */
+   *   dims     该站专属的维度识别规则，先于全局 LINK_KINDS 匹配
+   *   bf       是否支持「数量补足」（列表页用 ?page=N 翻页）。**这是全库唯一会联网的
+   *            功能的放行名单**，缺省 false。标记前必须有**真机抓取实证**（见 doBackfill
+   *            上方那段实测记录）—— 宁可功能不做，也不能赌错参数去敲人家的站。 */
   var SITE_TEMPLATES = [
     {
       id: 's_javbus', name: 'JavBus', pattern: '*://*.javbus.com/*', host: /javbus/i,
@@ -187,7 +190,7 @@
     },
     {
       id: 's_javdb580', name: 'JavDB 镜像580', pattern: '*://*.javdb580.com/*', host: /javdb580/i,
-      sel: ['.item', 'a.box', '.movie-box', '.grid-item'], enabled: true, mirror: 'javdb',
+      sel: ['.item', 'a.box', '.movie-box', '.grid-item'], enabled: true, mirror: 'javdb', bf: true,
       sbtn: '580', search: 'https://javdb580.com/search?q={q}&f=all', code: true
     },
     {
@@ -1662,7 +1665,10 @@
    *
    * 只克隆、不改站点分页器；克隆卡片带 .cf-cloned 便于识别与清理；
    * 克隆卡片不写入发现库（noteDiscovered 只记真实浏览过的内容，克隆会污染推荐）。 */
-  var BACKFILL_HOST_OK = /javdb580/i;
+  // 放行名单改由站点模板的 bf 标记驱动（见 SITE_TEMPLATES 注释）：
+  // 只有 JavDB580 打 bf:true —— 上面那条实测结论就是名单本身，别再往名单里加站
+  // （javdb.com 被 Cloudflare 挑战、javdb571 连不上、javbus 有年龄门，加了也只会
+  //   每次都失败，白敲人家的站还容易被反爬盯上）。换站前请先重跑一遍真机抓取。）
   var BACKFILL_MAX_PAGES = 3;      // 最多补几页，防「整页全被屏蔽」时无限抓
   var BACKFILL_MIN_GAP = 1200;     // 同站两次请求最小间隔（ms），避免被判定爬虫
   var lastBackfillAt = 0;
@@ -1682,8 +1688,10 @@
   function backfillAllowed() {
     if (!backfillEnabled()) return false;
     if (!currentSite) return false;
-    if (!BACKFILL_HOST_OK.test(location.hostname)) return false;
-    return true;
+    // 该站点模板必须显式声明支持补足（bf: true）。模板取自当前主机名，
+    // 与卡片识别同一套口径，不另立一份白名单（避免两处口径漂移）。
+    var t = templateForHost(location.hostname);
+    return !!(t && t.bf === true);
   }
   // 找出当前分页参数并推到下一页
   function nextPageUrl() {
@@ -1740,6 +1748,22 @@
     return n;
   }
 
+  /* 卡片身份：用它自身详情链接的 pathname 作为指纹。
+   * 用途是补足时的去重护栏。翻页有两个已知会「变旧」的风险：站点改了分页参数，
+   * 或反爬拦截页伪装成 200 把第 1 页又吐回来。那时的失败模式是**把同一批卡片
+   * 重复贴进列表**（用户看到重复内容，且不会有任何报错），比「什么都没补」更糟。
+   * 有指纹就能把这种失败降级成「一张都不插」。
+   * 取第一个 a[href]：列表卡的外层 <a> 就是详情链接。 */
+  function cardHrefKey(el) {
+    if (!el || !el.querySelector) return '';
+    var a = el.querySelector('a[href]');
+    if (!a) return '';
+    var h = a.getAttribute('href') || '';
+    if (!h || /^(#|javascript:)/i.test(h)) return '';
+    try { return new URL(h, location.href).pathname.replace(/\/+$/, '').toLowerCase(); }
+    catch (e) { return String(h).split('?')[0].replace(/\/+$/, '').toLowerCase(); }
+  }
+
   function doBackfill(origCount) {
     if (backfilling) return;
     if (!backfillAllowed()) return;
@@ -1771,6 +1795,11 @@
     if (!pageUrl) { backfilling = false; return; }
     var added = 0, pages = 0;
 
+    // 去重护栏：页面上已有的卡片指纹先入集合，抓回来的重复内容一律跳过。
+    // 顺带也拦住「第 2 页和第 3 页内容有重叠」这种常见情况。
+    var seenKeys = {};
+    native.forEach(function (c) { var k = cardHrefKey(c); if (k) seenKeys[k] = 1; });
+
     var step = function () {
       if (pages >= BACKFILL_MAX_PAGES || added >= need) {
         backfilling = false;
@@ -1791,8 +1820,12 @@
       }).then(function (html) {
         var got = cardsFromHtml(html);
         if (!got.length) throw new Error('未解析出卡片');
+        var fresh = 0;   // 本页真正新鲜（页面上还没有）的卡片数
         got.forEach(function (el) {
           if (added >= need) return;
+          var key = cardHrefKey(el);
+          if (key && seenKeys[key]) return;   // 重复内容：跳过，不插
+          if (key) seenKeys[key] = 1;
           var clone = el.cloneNode(true);
           clone.classList.add('cf-cloned', 'cf-card');
           // 克隆卡不参与发现库写入，也不带原位置记录
@@ -1802,7 +1835,15 @@
           try { clone.dataset.cfClone = '1'; } catch (e) { }
           container.appendChild(clone);
           added++;
+          fresh++;
         });
+        // 一整页都是已有内容 → 翻页参数多半不对，再往下翻只是白敲人家的站。
+        // 立刻收手（而不是把 BACKFILL_MAX_PAGES 页全抓一遍）。
+        if (!fresh) {
+          backfilling = false;
+          if (added) flashBall('已补足 ' + added + ' 张');
+          return;
+        }
         // 抓够就停，否则顺延到再下一页
         var u = new URL(pageUrl);
         var p = parseInt(u.searchParams.get('page') || '1', 10) || 1;

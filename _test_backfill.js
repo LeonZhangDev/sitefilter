@@ -9,10 +9,12 @@
  * 三道闸门（缺一不可）：
  *   ① settings.backfill !== 'off'
  *   ② 当前站点是监管中的站点（currentSite 非空）
- *   ③ 主机名匹配 JavDB580（唯一实测能拿到列表页的番号站）
+ *   ③ 当前站点的**模板**声明了 bf: true —— 目前只有 JavDB580（唯一实测能拿到
+ *      列表页的番号站；javdb.com 被 Cloudflare 挑战、javdb571 连不上、javbus 有年龄门）
  *
  * 其余断言覆盖：目标数量口径 / 克隆卡片不被记入发现库 / 不参与链接探测 /
- * 重跑前克隆被清掉（不越积越多）/ 失败静默降级并写 errLog。
+ * 重跑前克隆被清掉（不越积越多）/ 翻页失效时零重复卡片且立刻止损 /
+ * 失败静默降级并写 errLog。
  */
 'use strict';
 const fs = require('fs');
@@ -32,6 +34,16 @@ const nextHtml = '<div class="container">' + ['NXT-001', 'NXT-002', 'NXT-003'].m
     <a class="movie-box" href="/${c}">
       <div class="photo-frame"><img src="x.jpg" alt="${c}"></div>
       <div class="photo-info"><span class="title">Title ${c}</span><a href="/star/88">补足女优</a></div>
+    </a>
+  </div>`).join('') + '</div>';
+
+// 「翻页没生效」时下一页实际吐回来的东西：还是第 1 页那三张卡（ABC-001..003）。
+// 反爬拦截页伪装成 200、或站点改了分页参数，都是这个表现。
+const dupHtml = '<div class="container">' + ['ABC-001', 'ABC-002', 'ABC-003'].map(c => `
+  <div class="item">
+    <a class="movie-box" href="/${c}">
+      <div class="photo-frame"><img src="x.jpg" alt="${c}"></div>
+      <div class="photo-info"><span class="title">Title ${c}</span><a href="/star/99">明星甲</a></div>
     </a>
   </div>`).join('') + '</div>';
 
@@ -56,7 +68,7 @@ function build(opts) {
     fetches.push({ url: String(url), init: init || {} });
     if (opts.fetchFail) return Promise.reject(new Error('network down'));
     if (opts.fetch404) return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve('') });
-    return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(nextHtml) });
+    return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(opts.nextHtml || nextHtml) });
   };
   const store = {};
   // 补足的前提是「有卡片被屏蔽了，列表变稀」——没有屏蔽就没有缺口，need=0，功能本就该静默。
@@ -118,6 +130,27 @@ const cloneCount = doc => doc.querySelectorAll('.cf-cloned').length;
     check('[闸门] JavBus 上不产生克隆卡片', cloneCount(win.document) === 0);
   }
   {
+    // javdb.com：2026-09-22 实测 HTTP 200 但只有 1278B（Cloudflare 挑战 + 地区版权封锁），
+    // 拿不到卡片。虽然它是 JavDB580 的"正牌"，也不能放行 —— 权威域名不等于可用域名。
+    const { win, fetches } = build({
+      url: 'https://javdb.com/?page=1',
+      settings: { backfill: 'same' },
+      sites: [{ id: 's_javdb', pattern: '*://*.javdb.com/*', enabled: true, selector: '', note: 'JavDB' }],
+    });
+    await sleep(1600);
+    check('[闸门] javdb.com 上零请求（实测被 Cloudflare 挑战，拿不到列表）', fetches.length === 0);
+  }
+  {
+    // javdb571.com：实测 HTTP 000（连接失败）。同属 JavDB 家族但不是可用源。
+    const { win, fetches } = build({
+      url: 'https://javdb571.com/?page=1',
+      settings: { backfill: 'same' },
+      sites: [{ id: 's_javdb571', pattern: '*://*.javdb571.com/*', enabled: true, selector: '', note: 'JavDB 镜像' }],
+    });
+    await sleep(1600);
+    check('[闸门] javdb571.com 上零请求（实测连不上）', fetches.length === 0);
+  }
+  {
     // 非监管站点
     const { win, fetches } = build({
       url: 'https://example.com/?page=1',
@@ -158,6 +191,26 @@ const cloneCount = doc => doc.querySelectorAll('.cf-cloned').length;
       win.document.body.textContent.indexOf('NXT-001') !== -1);
     check('[放行] 克隆卡片不写发现库（补足女优不该入库）',
       !(store.sf_data_v1.discovered || {})['actress|补足女优']);
+  }
+
+  /* ============ ③bis 翻页失效时：宁可什么都不补，也绝不贴重复卡片 ============ */
+  {
+    // 页码参数被忽略 / 反爬页伪装成 200 → 抓回来的还是第 1 页那三张卡。
+    // 期望：一张都不插（不是「插进去变成 6 张重复卡」），且立刻止损只请求 1 次
+    //（而不是把 BACKFILL_MAX_PAGES=3 页全白敲一遍）。
+    const { win, fetches } = build({ settings: { backfill: 'same' }, nextHtml: dupHtml });
+    await sleep(2600);
+    check('[去重] 翻页没生效时零克隆（不贴重复卡片）', cloneCount(win.document) === 0);
+    check('[去重] 卡片总数不变（仍是 3 张，没有翻倍）',
+      win.document.querySelectorAll('.item').length === 3);
+    check('[去重] 发现整页重复后立刻止损，只请求 1 次（实测 ' + fetches.length + ' 次）',
+      fetches.length === 1);
+  }
+  {
+    // 反向对照：翻页正常（返回新卡）时，去重护栏不该误伤 —— 该补的还是要补。
+    const { win } = build({ settings: { backfill: 'same' } });
+    await sleep(2600);
+    check('[去重] 对照：翻页正常时仍然照补（护栏不误伤）', cloneCount(win.document) === 2);
   }
 
   /* ============ ④ 目标数量口径：数字档位 ============ */
