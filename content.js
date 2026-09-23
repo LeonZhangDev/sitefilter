@@ -351,6 +351,10 @@
   var ED2K_RE = new RegExp('ed2k://' + URL_STOP, 'gi');
   var THUNDER_RE = new RegExp('thunder://' + URL_STOP, 'gi');
   var TORRENT_RE = /https?:\/\/[^\s"'<>]*\.torrent(\?[^\s"'<>]*)?/gi;
+  // L3：正文里还可能出现「百分号编码」的磁力（magnet%3A%3Fxt%3D...），字面 MAGNET_RE 抓不到
+  var MAGNET_PCT_RE = /magnet%3A[^\s"'<>）)】\]]+/gi;
+  // L3：正文里 base64 包一层的磁力 token（bounded：24~400 字符，避免扫遍正文散文）
+  var B64_TOKEN_RE = /[A-Za-z0-9+/]{24,400}={0,2}/g;
   var SIZE_RE = /(\d+(?:\.\d+)?\s?(?:GB|GiB|MB|MiB|KB|TB|TiB))/i;
   var QUALITY_RE = /(2160p|4k|1080p|720p|480p|360p)/i;
   /* 磁力 xt 里的 hash：btih = v1（40 位 hex / 32 位 base32），btmh = v2（multihash，通常 64 位 hex） */
@@ -3686,6 +3690,60 @@
     return s;
   }
 
+  /* ---------------- 磁力反混淆（L3） ----------------
+   * 很多站会故意把磁力「藏起来」，最典型的几种形态：
+   *   ① 注入零宽/不可见字符（\u200b 之类）防正则；
+   *   ② HTML 实体编码（magnet:&#x3F;xt=... 或 &amp;）；
+   *   ③ 百分号编码（magnet%3A%3Fxt%3Durn%3Abtih%3A...）；
+   *   ④ base64 包一层（data-* 属性里放 bWFnbmV0Oj8...，点击时 atob）；
+   *   ⑤ 只给裸 hash（data-hash="a0b1…c8"）不带 magnet: 前缀。
+   * 这里统一「解一层」，返回归一化后的可用链接串；解不出来返回 null。
+   * 调用方（dispatchLink）据此重定型别再推给 pushLink。 */
+  function b64decode(s) {
+    try {
+      var bin = (typeof atob === 'function')
+        ? atob(s)
+        : Buffer.from(s, 'base64').toString('binary');
+      // thunder:// 变体是 base64("AA" + url + "ZZ")，去首尾不可打印包裹
+      return bin.replace(/^[^ -~]+/, '').replace(/[^ -~]+$/, '');
+    } catch (e) { return ''; }
+  }
+  function cleanupDecoded(d) {
+    return String(d).replace(/[​﻿‌‍﻿\u200b\u200c\u200d\u2060\ufeff]/g, '').trim();
+  }
+  function decodeObfuscated(raw) {
+    if (!raw) return null;
+    var s = String(raw);
+    // ① 去零宽/不可见字符，折叠多余空白
+    s = s.replace(/[​﻿‌‍﻿\u200b\u200c\u200d\u2060\ufeff\u00a0\u2028\u2029]/g, '')
+         .replace(/[ \t\r\n]+/g, ' ').trim();
+    // ② HTML 实体解码（&#xHH; / &#DDD; / 命名实体）
+    s = s.replace(/&(#x?[0-9a-f]+;|amp|lt|gt|quot|#39|apos)/gi, function (e, g) {
+      try {
+        if (g[0] === '#') {
+          var code = (g[1] === 'x' || g[1] === 'X') ? parseInt(g.slice(2), 16) : parseInt(g.slice(1), 10);
+          return String.fromCodePoint(code);
+        }
+        return ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" })[g.toLowerCase()] || e;
+      } catch (err) { return e; }
+    });
+    // ③ 百分号解码（仅当确实含 %XX，避免误伤字面 %）
+    if (/%[0-9a-f]{2}/i.test(s)) {
+      try { var p = decodeURIComponent(s); if (p && p !== s) s = p; } catch (e) { /* 保留原串 */ }
+    }
+    // ④ base64 包一层（data-* / 正文 token）
+    if (/^[A-Za-z0-9+/]+={0,2}$/.test(s) && s.length >= 24) {
+      var dec = cleanupDecoded(b64decode(s));
+      if (dec && /^(magnet:|thunder:|ed2k:|https?:)/i.test(dec)) return dec;
+    }
+    // ⑤ 裸 hash（data-hash 之类）→ 补 magnet: 前缀
+    var bare = s.match(/^(?:btih:)?([0-9a-f]{40}|[0-9a-f]{32})$/i);
+    if (bare) return 'magnet:?xt=urn:btih:' + bare[1];
+    // ⑥ 已是可用链接？
+    if (/^(magnet:|thunder:|ed2k:)/i.test(s) || /\.torrent(\?|$)/i.test(s) || /^https?:/i.test(s)) return s;
+    return null;
+  }
+
   // 字节数 → 人类可读。用 1024 进制（与 BT 客户端口径一致）。
   // 整数不带小数（1KB 而不是 1.00KB）—— 磁力体积大多数是整数 MB/GB，带两位小数反而显得像估算值。
   function fmtBytes(n) {
@@ -3819,6 +3877,24 @@
     });
   }
 
+  /* 探测源的统一入口（L3）。先过 decodeObfuscated() 解一层混淆，
+   * 再按「解码后的真实前缀」重定型别，最后交给 pushLink。
+   * hintType 只在「解码失败」时兜底（保留旧行为：原始就是 magnet 但解析不出 hash 仍丢弃）。
+   * 解码成功但前缀不认识 → 不强行当磁力推，避免误报。 */
+  function dispatchLink(arr, seen, raw, hintType, el) {
+    var dec = decodeObfuscated(raw);
+    var s = dec || String(raw).trim();
+    var type = hintType;
+    if (dec) {
+      if (/^magnet:/i.test(s)) type = 'magnet';
+      else if (/^thunder:/i.test(s)) type = 'thunder';
+      else if (/^ed2k:/i.test(s)) type = 'ed2k';
+      else if (/\.torrent(\?|$)/i.test(s)) type = 'torrent';
+      else if (/^https?:/i.test(s) && panOf(s)) type = 'pan';
+    }
+    pushLink(arr, seen, s, type, el);
+  }
+
   function probeLinks() {
     var arr = [], seen = {};
     var st = S.settings;
@@ -3837,25 +3913,27 @@
       var a = as[i];
       if (inClone(a)) continue;
       var h = a.getAttribute('href') || '';
-      if (/^magnet:/i.test(h)) pushLink(arr, seen, h, 'magnet', a);
-      else if (/^ed2k:/i.test(h)) pushLink(arr, seen, h, 'ed2k', a);
-      else if (/^thunder:/i.test(h)) pushLink(arr, seen, h, 'thunder', a);
-      else if (/\.torrent(\?|$)/i.test(h)) pushLink(arr, seen, h, 'torrent', a);
-      else if (/^https?:/i.test(h) && panOf(h)) pushLink(arr, seen, h, 'pan', a);
+      if (/^magnet:/i.test(h)) dispatchLink(arr, seen, h, 'magnet', a);
+      else if (/^ed2k:/i.test(h)) dispatchLink(arr, seen, h, 'ed2k', a);
+      else if (/^thunder:/i.test(h)) dispatchLink(arr, seen, h, 'thunder', a);
+      else if (/\.torrent(\?|$)/i.test(h)) dispatchLink(arr, seen, h, 'torrent', a);
+      else if (/^https?:/i.test(h) && panOf(h)) dispatchLink(arr, seen, h, 'pan', a);
     }
 
-    // 2) data-clipboard-text / data-url / data-link（很多站把磁力藏在这里）
-    var attrs = ['data-clipboard-text', 'data-url', 'data-link', 'data-magnet', 'data-copy'];
+    // 2) data-* 属性（很多站把磁力藏在这里；base64 / 裸 hash 也在此解出）
+    var attrs = ['data-clipboard-text', 'data-url', 'data-link', 'data-magnet', 'data-copy',
+                 'data-hash', 'data-infohash', 'data-btih'];
     for (var q = 0; q < attrs.length; q++) {
       var els = document.querySelectorAll('[' + attrs[q] + ']');
       for (var j = 0; j < els.length; j++) {
         if (inClone(els[j])) continue;
         var v = els[j].getAttribute(attrs[q]) || '';
-        if (/^magnet:/i.test(v)) pushLink(arr, seen, v, 'magnet', els[j]);
-        else if (/^ed2k:/i.test(v)) pushLink(arr, seen, v, 'ed2k', els[j]);
-        else if (/^thunder:/i.test(v)) pushLink(arr, seen, v, 'thunder', els[j]);
-        else if (/\.torrent(\?|$)/i.test(v)) pushLink(arr, seen, v, 'torrent', els[j]);
-        else if (/^https?:/i.test(v) && panOf(v)) pushLink(arr, seen, v, 'pan', els[j]);
+        if (/^magnet:/i.test(v)) dispatchLink(arr, seen, v, 'magnet', els[j]);
+        else if (/^ed2k:/i.test(v)) dispatchLink(arr, seen, v, 'ed2k', els[j]);
+        else if (/^thunder:/i.test(v)) dispatchLink(arr, seen, v, 'thunder', els[j]);
+        else if (/\.torrent(\?|$)/i.test(v)) dispatchLink(arr, seen, v, 'torrent', els[j]);
+        else if (/^https?:/i.test(v) && panOf(v)) dispatchLink(arr, seen, v, 'pan', els[j]);
+        else dispatchLink(arr, seen, v, 'magnet', els[j]);  // 兜底：让 decodeObfuscated 试解（base64 / 裸 hash / 实体）
       }
     }
 
@@ -3864,15 +3942,22 @@
     if (document.body) bodyText = document.body.innerText || document.body.textContent || '';
     var m;
     MAGNET_RE.lastIndex = 0;
-    while ((m = MAGNET_RE.exec(bodyText)) !== null) pushLink(arr, seen, m[0], 'magnet', null);
+    while ((m = MAGNET_RE.exec(bodyText)) !== null) dispatchLink(arr, seen, m[0], 'magnet', null);
     ED2K_RE.lastIndex = 0;
-    while ((m = ED2K_RE.exec(bodyText)) !== null) pushLink(arr, seen, m[0], 'ed2k', null);
+    while ((m = ED2K_RE.exec(bodyText)) !== null) dispatchLink(arr, seen, m[0], 'ed2k', null);
     THUNDER_RE.lastIndex = 0;
-    while ((m = THUNDER_RE.exec(bodyText)) !== null) pushLink(arr, seen, m[0], 'thunder', null);
+    while ((m = THUNDER_RE.exec(bodyText)) !== null) dispatchLink(arr, seen, m[0], 'thunder', null);
 
     // 未被 <a> 覆盖到的 .torrent 文本
     TORRENT_RE.lastIndex = 0;
-    while ((m = TORRENT_RE.exec(bodyText)) !== null) pushLink(arr, seen, m[0], 'torrent', null);
+    while ((m = TORRENT_RE.exec(bodyText)) !== null) dispatchLink(arr, seen, m[0], 'torrent', null);
+
+    // L3：正文里「百分号编码」的磁力（magnet%3A%3Fxt%3D...）
+    MAGNET_PCT_RE.lastIndex = 0;
+    while ((m = MAGNET_PCT_RE.exec(bodyText)) !== null) dispatchLink(arr, seen, m[0], 'magnet', null);
+    // L3：正文里 base64 包一层的磁力 token（decodeObfuscated 只会在解出真链接时才推，不误报）
+    B64_TOKEN_RE.lastIndex = 0;
+    while ((m = B64_TOKEN_RE.exec(bodyText)) !== null) dispatchLink(arr, seen, m[0], 'magnet', null);
 
     // L4 排序：按「信息完整度」分层，磁力优先（详见 sortLinks）
     sortLinks(arr);
@@ -4604,6 +4689,7 @@
         guessFromName: guessFromName,
         magnetRank: magnetRank,
         buildMagnetRaw: buildMagnetRaw,
+        decodeObfuscated: decodeObfuscated,
         probeLinks: probeLinks,
         dlLinks: function () { return dlLinks; },
         stats: function () { return stats; }

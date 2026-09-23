@@ -135,6 +135,7 @@ function build(opts) {
     RegExp, String, Number, Boolean, Array, Object, Error,
     console: { log() { }, warn() { }, error() { } },
     decodeURIComponent, encodeURIComponent, parseInt, parseFloat, isNaN,
+    atob: win.atob.bind(win), btoa: win.btoa.bind(win),
   };
   sandbox.globalThis = sandbox;
   // 显式打开只读测试钩子
@@ -264,6 +265,64 @@ const dlText = d => d.raw;
     check('[重建] dn 已 URL 编码（空格不裸奔）', raw.indexOf('dn=ABC-001%201080p') !== -1 || raw.indexOf('dn=') !== -1);
     check('[重建] 重建结果可被自己解析回同一 hash',
       hook.parseMagnet(raw).hash === HASH_A);
+  }
+
+  /* ================================================================
+   * L3 反混淆：把藏起来的磁力解出来（直测 decodeObfuscated）
+   * ================================================================ */
+  {
+    check('[L3][钩子] 暴露纯函数 decodeObfuscated', typeof hook.decodeObfuscated === 'function');
+
+    // ① 注入零宽字符防正则
+    const zw = 'magnet:?\u200bxt=urn:btih:' + HASH_A + '&dn=' + encodeURIComponent('zw.mkv');
+    const mzw = hook.parseMagnet(hook.decodeObfuscated(zw));
+    check('[L3][零宽] 注入 \\u200b 的磁力被还原为同一 hash', !!mzw && mzw.hash === HASH_A);
+
+    // ② HTML 实体编码（&#x3F; → ?，&#x26; → &）
+    const ent = 'magnet:&#x3F;xt=urn:btih:' + HASH_A + '&#x26;dn=' + encodeURIComponent('entity.mkv');
+    const ment = hook.decodeObfuscated(ent);
+    check('[L3][实体] &#x3F;/&#x26; 被解码成 ? 和 &',
+      !!ment && ment.indexOf('magnet:?xt=urn:btih:') === 0 && ment.indexOf('&dn=') !== -1);
+
+    // ③ 百分号编码（magnet%3A%3Fxt%3D...）
+    const pct = 'magnet%3A%3Fxt%3Durn%3Abtih%3A' + HASH_A + '%26dn%3D' + encodeURIComponent('pct.mkv');
+    const mpct = hook.decodeObfuscated(pct);
+    check('[L3][百分号] magnet%3A%3F... 被解码为可用磁力',
+      !!mpct && mpct.indexOf('magnet:?xt=urn:btih:') === 0);
+
+    // ④ base64 包一层（data-* 常见藏法）
+    const b64 = Buffer.from('magnet:?xt=urn:btih:' + HASH_A + '&dn=' + encodeURIComponent('b64.mkv')).toString('base64');
+    const mb64 = hook.decodeObfuscated(b64);
+    check('[L3][base64] 包一层 base64 的磁力被解出',
+      !!mb64 && mb64.indexOf('magnet:?xt=urn:btih:') === 0);
+
+    // ⑤ 裸 40 位 hash 补 magnet: 前缀（data-hash 之类）
+    const bare = hook.decodeObfuscated(HASH_A);
+    check('[L3][裸hash] 40 位裸 hex 补上 magnet: 前缀', bare === 'magnet:?xt=urn:btih:' + HASH_A);
+
+    // ⑥ 普通散文不应被当磁力（不误报）
+    check('[L3][健壮] 普通文本 decodeObfuscated 返回 null',
+      hook.decodeObfuscated('just some random prose with no link') === null);
+  }
+
+  /* L3 端到端：藏在属性 / 正文里的磁力，面板要出现 */
+  {
+    const magB64 = Buffer.from('magnet:?xt=urn:btmh:' + HASH_V2 + '&dn=' + encodeURIComponent('l3-v2.mkv')).toString('base64');
+    const L3_HTML = `<!doctype html><html><body>
+      <div class="wrap">
+        <span id="h1" data-hash="${HASH_B}">裸hash</span>
+        <a id="m1" data-magnet="${magB64}" href="#">base64磁力</a>
+        <div id="z1">magnet:?\u200bxt=urn:btih:${HASH_A}&dn=zw.mkv</div>
+      </div></body></html>`;
+    const { win } = build({ html: L3_HTML });
+    await sleep(900);
+    const h = hookOf(win);
+    const mags = h.dlLinks().filter(d => d.type === 'magnet');
+    check('[L3][面板] data-hash 裸 hash 被补全为磁力', mags.some(d => d.magnet && d.magnet.hash === HASH_B));
+    check('[L3][面板] data-magnet 的 base64 被解出为磁力（含 v2）',
+      mags.some(d => d.magnet && d.magnet.hash === HASH_V2 && d.magnet.algo === 'btmh'));
+    check('[L3][面板] 正文零宽字符磁力被还原', mags.some(d => d.magnet && d.magnet.hash === HASH_A));
+    check('[L3][面板] 共 3 条磁力（无重复、无漏）', mags.length === 3);
   }
 
   /* ================================================================

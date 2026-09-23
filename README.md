@@ -855,7 +855,7 @@ site-filter/
 ├── _test_backfill.js 番号站数量补足专项：含「开关关闭 / 不在白名单时零网络请求」安全门禁（需 jsdom，可删）
 ├── _test_collector_native.js Collector Native Messaging 桥协议测试（需 jsdom，可删）
 ├── _test_xchina_download.js  XChina 详情页控制条与预览/确认流程测试（需 jsdom，可删）
-├── _test_magnet.js   磁力深度专项：全字段解析/同 infohash 归并/排序分层/残缺串丢弃（需 jsdom，可删）
+├── _test_magnet.js   磁力深度专项：L2 全字段解析/L4 同 infohash 归并排序/L3 反混淆（需 jsdom，可删）
 ├── docs/             需求 / 设计 / 验收 / 决策文档（入口见 docs/README.md）
 └── README.md         本文档
 ```
@@ -916,9 +916,9 @@ NODE_PATH=<...> node _test_xchina_download.js
 NODE_PATH=<...> node _test_magnet.js
 ```
 
-当前共 **1004 项断言全部通过，0 失败**（18 套）：
+当前共 **1015 项断言全部通过，0 失败**（18 套）：
 设置页 169 · 主冒烟 111 · 数据迁移 97 · 站点模板 97 · 表达式引擎 83 · 下番号下载 79 ·
-磁力深度 53 · 软屏蔽 45 · 新增功能 41 · 采集器桥 37 · 多站比价 34 · 加密备份 30 ·
+磁力深度 64 · 软屏蔽 45 · 新增功能 41 · 采集器桥 37 · 多站比价 34 · 加密备份 30 ·
 每日推荐 27 · 相似推荐 25 · 写回完整性 24 · 番号补足 22 · 规则条件 20 · 导入 10。
 
 测试套件由 `make_package.py` 自动发现（`_smoke.js` + 全部 `_test_*.js`），
