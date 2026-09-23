@@ -23,6 +23,7 @@ var DEFAULT_SETTINGS = {
   watchBtn: true, showWhy: true, softBlock: false, autoBackup: false,
   backupKeep: 7,               // 自动备份快照轮换份数：0 = 不轮换（无限累积）
   backfill: 'off',             // 番号站数量补足：'off' / 'same' / 正整数（唯一会联网的开关）
+  magnetAction: 'copy',    // 磁力行操作：'copy'（默认，仅复制）/ 'open'（仅用本机下载工具打开）/ 'both'（复制+打开）
   blockDisplay: 'placeholder', // 屏蔽后显示方式：'hide' 完全隐藏 / 'placeholder' 保留占位（默认）/ 'soft' 灰化遮罩
   probeLinks: true, probeMark: true, probeAnySite: true,
   hlColor: '#00e5ff', ball: { right: 24, bottom: 24 },
@@ -633,6 +634,22 @@ function renderBfSel() {
         if (tip) tip.textContent = '已开启。下次刷新番号站页面时会去下一页抓卡片填满空位。';
       }
     });
+  });
+}
+
+/* 磁力行操作方式：copy / open / both。触发的是系统默认 magnet 协议处理程序，
+   扩展本身不下载（P2P 由迅雷/μTorrent/qBittorrent 等完成）。 */
+var MA_VALUES = ['copy', 'open', 'both'];
+function renderMagnetActionSel() {
+  var sel = document.getElementById('magnetActionSel');
+  if (!sel) return;
+  var cur = D.settings.magnetAction || 'copy';
+  if (MA_VALUES.indexOf(cur) === -1) cur = 'copy';
+  sel.value = cur;
+  sel.addEventListener('change', function () {
+    if (MA_VALUES.indexOf(sel.value) === -1) return;
+    D.settings.magnetAction = sel.value;
+    save();
   });
 }
 
@@ -3064,6 +3081,7 @@ function renderAll() {
   renderSwitches();
   renderBdSel();
   renderBfSel();
+  renderMagnetActionSel();
   renderColorDots();
   renderRec();
   renderSync();

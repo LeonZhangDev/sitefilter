@@ -350,6 +350,21 @@
     </div>
 
     <div class="card">
+      <h2>磁力链接操作方式 <small>探测到磁力后，每一行怎么处理</small></h2>
+      <div class="grid" style="align-items:center">
+        <label class="sw" style="cursor:default">
+          <select id="magnetActionSel" style="margin-right:8px">
+            <option value="copy">仅复制（默认：和以前一样）</option>
+            <option value="open">仅用下载工具打开（点「打开」唤起迅雷/μTorrent 等）</option>
+            <option value="both">复制 + 打开（两个按钮都显示）</option>
+          </select>
+          磁力行操作方式
+        </label>
+      </div>
+      <div class="tip">「打开」是让扩展把 <code>magnet:</code> 交给<b>系统默认</b>的 magnet 协议处理程序 —— 真正下载由迅雷/μTorrent/qBittorrent 等完成。本机需安装其一并设为默认；想「指定用迅雷」就把它设为系统默认 magnet 处理程序。</div>
+    </div>
+
+    <div class="card">
       <h2>默认高亮颜色</h2>
       <div class="grid" id="hlDots"></div>
     </div>

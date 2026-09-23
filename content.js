@@ -80,8 +80,9 @@
     auditWarn: true,        // 建屏蔽规则前先估算影响面，过宽时先确认
     autoBackup: false,      // 每天自动备份整库到下载目录（实际执行在 background.js）
     backupKeep: 7,          // 自动备份快照轮换份数：0 = 不轮换（无限累积）
-    backfill: 'off'         // 番号站数量补足：'off'（默认，绝不联网）/ 'same'（补齐到原始数量）/ 正整数（指定数量）
+    backfill: 'off',        // 番号站数量补足：'off'（默认，绝不联网）/ 'same'（补齐到原始数量）/ 正整数（指定数量）
                             // ⚠ 这是全库唯一会发网络请求的开关，且仅对 JavDB580 生效（见 doBackfill 注释）
+    magnetAction: 'copy'    // 磁力行操作：'copy'（默认，仅复制）/ 'open'（仅用本机下载工具打开）/ 'both'（复制+打开）
   };
 
   // 「仍然查看」放行有效期（可调：设置页「软屏蔽 → 放行有效期」）
@@ -2269,6 +2270,12 @@
         toggleRule(mini.dataset.name, mini.dataset.type || activeTab, mini.dataset.a);
         return;
       }
+      // 下载链接：用本机下载工具打开磁力
+      if (mini && mini.dataset.open != null) {
+        var od = dlLinks[parseInt(mini.dataset.open, 10)];
+        if (od) openInClient(od.raw);
+        return;
+      }
       // 下载链接：单条复制
       if (mini && mini.dataset.dl != null) {
         var d = dlLinks[parseInt(mini.dataset.dl, 10)];
@@ -2598,6 +2605,38 @@
     ui.list.innerHTML = html;
   }
 
+  /* ---------------- 磁力交给本机下载工具 ----------------
+   * 扩展不下载磁力（那是 P2P，得靠迅雷/μTorrent/qBittorrent 等），只负责把
+   * magnet: 交给「系统默认 magnet 协议处理程序」。做法：造一个隐形 <a> 并 click，
+   * 浏览器会把它路由给本机注册了 magnet: 的程序。无法从扩展侧探测本机是否装了
+   * 客户端，所以首次点击给一次提示 —— 点了没反应就是没装 / 没设为默认。 */
+  var magnetHintShown = false;
+  function openInClient(raw) {
+    if (!raw || !/^magnet:/i.test(raw)) return;
+    try {
+      var a = document.createElement('a');
+      a.href = raw;
+      a.rel = 'noreferrer';
+      a.style.display = 'none';
+      (document.body || document.documentElement).appendChild(a);
+      a.click();
+      if (a.parentNode) a.parentNode.removeChild(a);
+    } catch (e) { /* 唤起失败绝不影响主流程 */ }
+    if (!magnetHintShown) { magnetHintShown = true; magnetOpenHint(); }
+  }
+  function magnetOpenHint() {
+    try {
+      var sr = ui && ui.host && ui.host.shadowRoot;
+      var bar = sr && sr.querySelector('.cf-dlbar');
+      if (!bar || bar.parentNode.querySelector('.cf-maghint')) return;
+      var tip = document.createElement('div');
+      tip.className = 'cf-maghint cf-tip';
+      tip.style.cssText = 'margin-top:6px;color:#ffd27f';
+      tip.textContent = '已尝试用本机下载工具打开；若没反应，请确认已安装迅雷/μTorrent/qBittorrent 并设为系统默认 magnet 处理程序。';
+      bar.parentNode.insertBefore(tip, bar.nextSibling);
+    } catch (e) { }
+  }
+
   /* ---------------- 下载链接页 ---------------- */
   function renderDownloads() {
     if (!dlLinks.length) {
@@ -2607,9 +2646,14 @@
         '任意网页都会自动探测（可在「通用设置」关闭）。</div>';
       return;
     }
+    var ma = S.settings.magnetAction || 'copy';
+    var showOpen = ma !== 'copy';
+    var showCopy = ma !== 'open';
     var bar = '<div class="cf-dlbar">' +
       '<button data-act="copyAllMagnet">复制全部磁力</button>' +
-      '<button data-act="copyAll">复制全部链接</button></div>';
+      '<button data-act="copyAll">复制全部链接</button>' +
+      (showOpen ? '<button data-act="openAllMagnet">用下载工具打开全部磁力</button>' : '') +
+      '</div>';
 
     var rows = dlLinks.map(function (d, i) {
       var meta = [];
@@ -2625,11 +2669,14 @@
       var badge = d.type === 'magnet' && m
         ? '<span class="k magnet">' + (m.algo === 'btmh' ? 'MAGNET·V2' : 'MAGNET') + '</span>'
         : '<span class="k ' + d.type + '">' + d.type.toUpperCase() + '</span>';
+      var btns = '';
+      if (d.type === 'magnet' && showOpen) btns += '<button class="cf-mini" data-open="' + i + '">打开</button>';
+      if (showCopy) btns += '<button class="cf-mini" data-dl="' + i + '">复制</button>';
       return '<div class="cf-dlrow">' +
         badge +
         '<span class="info"><span class="n" title="' + escapeHtml(d.raw) + '">' + escapeHtml(d.label) + '</span>' +
         (meta.length ? '<span class="m">' + escapeHtml(meta.join(' · ')) + '</span>' : '') + '</span>' +
-        '<button class="cf-mini" data-dl="' + i + '">复制</button>' +
+        btns +
         '</div>';
     }).join('');
     ui.list.innerHTML = bar + rows;
@@ -3478,6 +3525,10 @@
     }
     if (act === 'copyAll') {
       copyText(dlLinks.length ? dlLinks.map(function (d) { return d.raw; }).join('\n') : '（本页没有探测到链接）');
+      return;
+    }
+    if (act === 'openAllMagnet') {
+      dlLinks.forEach(function (d) { if (d.type === 'magnet') openInClient(d.raw); });
       return;
     }
     if (act === 'exportFavCodes') {

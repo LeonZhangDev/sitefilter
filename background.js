@@ -51,6 +51,7 @@ var DEFAULT_SETTINGS = {
   autoBackup: false,
   backupKeep: 7,               // 自动备份快照轮换份数：0 = 不轮换（无限累积）
   backfill: 'off',             // 番号站数量补足（唯一会联网的开关，仅 JavDB580 生效）
+  magnetAction: 'copy',    // 磁力行操作：'copy'（默认，仅复制）/ 'open'（仅用本机下载工具打开）/ 'both'（复制+打开）
   hlColor: '#00e5ff',
   ball: { right: 24, bottom: 24 },
   ballLock: false

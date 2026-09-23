@@ -339,6 +339,8 @@ const dlText = d => d.raw;
       const rows = list.querySelectorAll('.cf-dlrow');
       // 页面给了 3 条有效磁力（A1/A2 同一 hash 归并成 1 条 + B + v2）+ 1 网盘 + 1 电驴 = 5 行
       check('[面板] 行数 = 5（7 条链接中：A1/A2 归并、残缺磁力丢弃）', rows.length === 5);
+      check('[面板] 默认 magnetAction=copy 时不显示「打开」按钮（零行为变化）',
+        list.querySelectorAll('[data-open]').length === 0);
       check('[面板][C][回归] 同一 infohash 的两个变体只出现一行（旧代码两行）',
         text.indexOf('c12fe1aabb'.toUpperCase().slice(0, 10)) !== -1 &&
         countOccurrences(text, 'C12FE1AABB') === 1);
@@ -375,6 +377,44 @@ const dlText = d => d.raw;
     check('[统计] 探测结果已落进 stats.dl', h && h.stats().dl === 5);
     check('[统计] dlLinks 里磁力占 3 条（归并后）',
       h && h.dlLinks().filter(d => d.type === 'magnet').length === 3);
+  }
+
+  /* 磁力行操作方式：both → 每行有「打开」按钮，点击唤起系统默认下载工具 */
+  {
+    const { win } = build({ settings: { magnetAction: 'both' } });
+    await sleep(900);
+    const list = await openDownloadTab(win);
+    const opens = list ? list.querySelectorAll('[data-open]') : [];
+    const copies = list ? list.querySelectorAll('[data-dl]') : [];
+    check('[打开] both 模式：磁力行出现「打开」按钮', opens.length > 0);
+    check('[打开] both 模式：同时保留「复制」按钮', copies.length > 0);
+    check('[打开] 顶部出现「用下载工具打开全部磁力」按钮',
+      !!list && !!list.parentNode.querySelector('[data-act="openAllMagnet"]'));
+    // 点击「打开」→ 造一个 magnet: 锚点并 click（用桩捕获，避免 jsdom 真导航）
+    let captured = null;
+    const proto = win.HTMLAnchorElement.prototype;
+    const origClick = proto.click;
+    proto.click = function () { captured = this.href; };
+    try {
+      opens[0].dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    } finally {
+      proto.click = origClick;
+    }
+    check('[打开][回归] 点击「打开」唤起系统默认处理程序（生成 magnet: 锚点）',
+      !!captured && /magnet:/i.test(captured));
+    check('[打开] 首次点击后出现一次性提示（未装客户端时引导）',
+      !!list && !!list.parentNode.querySelector('.cf-maghint'));
+  }
+
+  /* 磁力行操作方式：open → 只有「打开」按钮，没有「复制」 */
+  {
+    const { win } = build({ settings: { magnetAction: 'open' } });
+    await sleep(900);
+    const list = await openDownloadTab(win);
+    const opens = list ? list.querySelectorAll('[data-open]') : [];
+    const copies = list ? list.querySelectorAll('[data-dl]') : [];
+    check('[打开] open 模式：磁力行有「打开」按钮', opens.length > 0);
+    check('[打开] open 模式：不显示「复制」按钮（仅打开）', copies.length === 0);
   }
 
   function countOccurrences(s, sub) {
