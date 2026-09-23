@@ -414,6 +414,7 @@ SiteFilter 是**纯前端扩展**（Chrome / Edge MV3，无构建步骤、无服
 - **路径留空 = 用默认**：设置页 → 通用设置 → 「自定义下载器」留空即走 Tier A，**不需要装本机桥**。
 - **Tier B 失败自动回退 Tier A**：本机桥没装 / 路径不对 / 超时，都会回退去唤起系统默认，并在面板里写明失败原因 —— 保证「点了总有反应」。
 - 本机桥只接受 `open-magnet` / `ping`，`client` 必须绝对路径 + 扩展名 ∈ `{.exe .com .bat .cmd .lnk}`，用 `Popen(list)` 启动（不走 shell）。详见 `native-host/README.md`。
+- **本机桥随包分发**：`native-host/`（`host.py` + `install.py` + 说明）就在扩展包里，解压后把设置页提示的 `python native-host/install.py` 跑一次、重启浏览器即可 —— 从 zip 装的用户不需要另外去仓库取文件。
 
 > 本机需安装其一并设为默认；扩展无法从扩展侧探测本机是否装了 BT 客户端，所以点了没反应时面板会给一次引导提示。
 
@@ -858,7 +859,7 @@ site-filter/
 ├── magnet-core.js    磁力/下载链接解析层（纯函数：L2 全字段解析、L3 反混淆、体积格式化、同 infohash 归并排序；content script 与其它入口共用）
 ├── collector-native.js  Collector Native Messaging 桥（由 background.js 用 importScripts 加载）
 ├── magnet-native.js   磁力交「指定下载器」的 Native Messaging 桥（同上加载；配套 native-host/）
-├── native-host/       可选的自定义下载器本机程序：host.py + install.py（一次注册即用，见 native-host/README.md）
+├── native-host/       可选的自定义下载器本机程序：host.py + install.py + README（**随包分发**，一次注册即用）
 ├── popup.html/js     工具栏弹窗
 ├── options.html/js   完整设置页（规则+规则体检+规则包 / 表达式测试器 / 分组+场景档位 / 站点 / 番号收藏夹 / 发现&推荐+候选规则 / 数据看板+月度回顾 / 每日推荐 / 软屏蔽 / 加密备份 / 错误日志 / 快捷键 / 通用设置）
 ├── options.css
@@ -872,7 +873,7 @@ site-filter/
 ├── dist/             打包产物（可删）
 ├── _load.js          测试用 content script 装载器：顺序取自 manifest 的 content_scripts，并提供 backgroundBundle()（= importScripts 目标 + background.js）；避免每个测例各自硬编码文件名（可删）
 ├── _smoke.js         主冒烟测试：面板/规则/推荐/相似下钻/待看看板/搜索/撤销/悬停/键盘导航/右键菜单/幂等性（需 jsdom，可删）
-├── _test_assembly.js 装配守卫：加载顺序与 manifest 一致 / 共享模块必须排在 content.js 之前 / 打包白名单覆盖每个引用 / 测例不得绕过 _load.js 直接执行源码（node 直接跑，可删）
+├── _test_assembly.js 装配守卫：加载顺序与 manifest 一致 / 共享模块必须排在 content.js 之前 / 打包白名单覆盖每个引用（含 Tier B 的 native-host/）/ 测例不得绕过 _load.js 直接执行源码（node 直接跑，可删）
 ├── _test_daily.js    每日推荐生成逻辑单测（含已看粒度/反馈/维度/权重，node 直接跑，可删）
 ├── _test_similar.js  相似女优推荐引擎单测（IDF 加权 + 分解/共同出演，node 直接跑，可删）
 ├── _test_import.js   从站点收藏页导入功能测试（需 jsdom，可删，不影响使用）
@@ -889,10 +890,10 @@ site-filter/
 ├── _test_backfill.js 番号站数量补足专项：含「开关关闭 / 不在放行名单时零网络请求」安全门禁 + 翻页失效时零重复卡片（需 jsdom，可删）
 ├── _test_collector_native.js Collector Native Messaging 桥协议测试（需 jsdom，可删）
 ├── _test_xchina_download.js  XChina 详情页控制条与预览/确认流程测试（需 jsdom，可删）
-├── _test_magnet.js   磁力深度专项：L2 全字段解析/L4 同 infohash 归并排序/L3 反混淆（需 jsdom，可删）
+├── _test_magnet.js   磁力深度专项：L2 全字段解析/L4 同 infohash 归并排序/L3 反混淆/正文「隐形空白」截断的修复（需 jsdom，可删）
 ├── _test_rulecheck.js 规则体检/影响面预演共用匹配口径（rulecheck.js）专项测试：matchEntity 单测 + matchRule 一致性交叉验证（需 jsdom，可删）
 ├── _test_magnet_bridge.js 磁力本机桥（magnet-native.js）专项：端口复用/超时分类/迟到响应丢弃/降级（node 直接跑，可删）
-├── _test_native_host.py  本机桥 host.py 安全边界：magnet 校验 / 协议动作白名单 / client 路径与扩展名白名单（纯标准库，可删）
+├── _test_native_host.py  本机桥 host.py 安全边界：magnet 校验 / 协议动作白名单 / client 路径与扩展名白名单；外加打包范围断言（Tier B 的 native-host/ 必须真的会进包）（纯标准库，可删）
 ├── _test_docs.js     文档一致性守卫：README 的 manifest version / schemaVersion / 测试套数声明必须等于真实值；已被事实推翻的旧说法不许回来；002/003/004 文首必须有实施状态小节（node 直接跑，可删）
 ├── docs/             需求 / 设计 / 验收 / 决策文档（入口见 docs/README.md）
 └── README.md         本文档
@@ -959,11 +960,11 @@ NODE_PATH=<...> node _test_rulecheck.js
 python _test_native_host.py     # 本机桥 host.py 的安全边界（纯标准库，无需 jsdom）
 ```
 
-当前共 **1158 项断言全部通过，0 失败**（23 套）：
-设置页 169 · 主冒烟 111 · 站点模板 108 · 数据迁移 97 · 表达式引擎 83 · 磁力深度 81 ·
+当前共 **1198 项断言全部通过，0 失败**（23 套）：
+设置页 169 · 主冒烟 111 · 磁力深度 110 · 站点模板 108 · 数据迁移 97 · 表达式引擎 83 ·
 下番号下载 79 · 软屏蔽 55 · 新增功能 41 · 采集器桥 39 · 多站比价 34 · 加密备份 30 ·
-番号补足 28 · 每日推荐 27 · 本机下载器桥(host.py) 25 · 相似推荐 25 · 写回完整性 24 ·
-磁力桥(JS) 24 · 规则条件 20 · 规则体检 17 · 文档一致性 17 · 骨架装配 14 · 导入 10。
+本机下载器桥(host.py) 31 · 番号补足 28 · 每日推荐 27 · 相似推荐 25 · 写回完整性 24 ·
+磁力桥(JS) 24 · 规则条件 20 · 规则体检 17 · 文档一致性 19 · 骨架装配 17 · 导入 10。
 
 测试套件由 `make_package.py` 自动发现（`_smoke.js` + 全部 `_test_*.js`，外加 `_test_*.py`）；
 其中 `_test_docs.js` 守的是**文档与代码的一致性**（README 的版本/套数声明、需求文档的状态列），

@@ -57,7 +57,21 @@ INCLUDE_FILES = [
     'options.js',
     'options.css',
 ]
-INCLUDE_DIRS = ['icons']
+INCLUDE_DIRS = ['icons', 'native-host']
+
+# 目录白名单里**显式放行**的文件。
+# EXCLUDE_RE 那条 `.*\.py$ / .*\.md$` 是为根目录的测试与脚本设的，可它对
+# native-host/ 一视同仁 —— 而设置页让用户「运行 native-host/install.py」，
+# 于是这三个文件必须真的进包：否则从 zip 装的用户根本找不到 install.py，
+# Tier B 对他们实际不可用，而我们的门禁还全绿。
+INCLUDE_DIR_EXTRA = [
+    'native-host/host.py',
+    'native-host/install.py',
+    'native-host/README.md',   # zip 里 Tier B 唯一的安装说明
+]
+
+# Tier B 能用的前提。缺了不会有任何报错，只在用户那里表现为「照提示找不到文件」。
+NATIVE_HOST_REQUIRED = ['native-host/host.py', 'native-host/install.py']
 
 # 明确排除（双保险，防止以后有人往白名单里加错东西）
 EXCLUDE_RE = re.compile(r'(^|[\\/])(_|test|tests|dist|\.git|node_modules|.*\.py$|.*\.md$|package(-lock)?\.json$)')
@@ -70,6 +84,18 @@ JS_FILES = [
 
 
 # ---------------------------------------------------------------- 基础工具
+
+def is_packable(rel):
+    """某个路径是否会被打进包 —— **唯一**判据。
+
+    collect()（真打包）/ check_manifest()（打包前校验）/ 打包后的 zip 兜底
+    三处都必须走这里。以前它们各写各的过滤（两次 os.walk + 一次扫 zip），
+    一漂移就会出现「门禁说覆盖了、包里其实没有」；rulecheck.js 漏配那次
+    是同一个病的另一种发作。
+    """
+    rel = str(rel).replace('\\', '/')
+    return rel in INCLUDE_DIR_EXTRA or not EXCLUDE_RE.search(rel)
+
 
 def log(msg, quiet=False):
     if not quiet:
@@ -322,7 +348,7 @@ def check_manifest(m):
                 problems.append('%s 引用的页面不存在：%s' % (key, page))
 
     # 白名单里的文件应当都真实存在（缺了说明打包会漏东西）
-    for name in INCLUDE_FILES:
+    for name in INCLUDE_FILES + INCLUDE_DIR_EXTRA:
         if not os.path.exists(os.path.join(HERE, name)):
             warnings.append('白名单文件缺失（不会进包）：%s' % name)
 
@@ -330,16 +356,8 @@ def check_manifest(m):
     # 这条是补丁：rulecheck.js 曾进了 manifest.json 的 content_scripts，
     # 却没进 INCLUDE_FILES —— 打出来的 zip 缺文件、扩展一加载就坏，而门禁当时全绿。
     # 光校验"文件存在磁盘上"不够，必须校验"会被打进包"。
-    packaged = set(n.replace('\\', '/') for n in INCLUDE_FILES)
-    for d in INCLUDE_DIRS:
-        root = os.path.join(HERE, d)
-        if not os.path.isdir(root):
-            continue
-        for base, _dirs, names in os.walk(root):
-            for n in names:
-                rel = os.path.relpath(os.path.join(base, n), HERE).replace('\\', '/')
-                if not EXCLUDE_RE.search(rel):
-                    packaged.add(rel)
+    # 「会进包的文件」只有一个来源（collect），别在这里再算一遍
+    packaged = set(collect(quiet=True))
 
     refs = []
     for cs in m.get('content_scripts', []):
@@ -380,6 +398,14 @@ def check_manifest(m):
         except Exception as e:
             warnings.append('读取 background.js 检查 importScripts 失败：%s' % e)
 
+    # Tier B（指定下载器）的本机代理必须真的进包。
+    # 这不是漂亮话：INCLUDE_DIRS 曾经只有 icons，打出来的 zip 里没有 native-host/，
+    # 而设置页照样写着「请先运行 native-host/install.py」—— 用户照提示找不到文件，
+    # 功能静默不可用，本地门禁却全绿。
+    for rel in NATIVE_HOST_REQUIRED:
+        if rel not in packaged:
+            problems.append('Tier B 的本机代理没进包（用户拿不到它）：%s' % rel)
+
     # 权限提示
     perms = m.get('permissions') or []
     risky = [p for p in perms if p in ('<all_urls>', 'tabs', 'webRequest', 'cookies', 'history')]
@@ -389,25 +415,24 @@ def check_manifest(m):
     return problems, warnings
 
 
-def collect():
+def collect(quiet=False):
+    """会进包的文件清单。判据见 is_packable() —— 别在这里再写一套过滤。"""
     files = []
-    for name in INCLUDE_FILES:
+    for name in INCLUDE_FILES + INCLUDE_DIR_EXTRA:
         p = os.path.join(HERE, name)
         if os.path.exists(p):
             files.append(name)
-        else:
-            print('警告：白名单文件缺失，已跳过：%s' % name)
+        elif not quiet:
+            print('警告：应进包的文件缺失，已跳过：%s' % name)
     for d in INCLUDE_DIRS:
         root = os.path.join(HERE, d)
         if not os.path.isdir(root):
             continue
         for base, _dirs, names in os.walk(root):
             for n in names:
-                full = os.path.join(base, n)
-                rel = os.path.relpath(full, HERE).replace('\\', '/')
-                if EXCLUDE_RE.search(rel):
-                    continue
-                files.append(rel)
+                rel = os.path.relpath(os.path.join(base, n), HERE).replace('\\', '/')
+                if is_packable(rel):
+                    files.append(rel)
     return sorted(set(files))
 
 
@@ -566,9 +591,9 @@ def build(out=None, ci=False, bump=None, note='', unpacked=True, quiet=False,
         size = os.path.getsize(os.path.join(HERE, rel))
         print('  %-26s %8d B' % (rel, size))
 
-    # 兜底：确认测试/临时文件没被打进去
+    # 兜底：确认测试/临时文件没被打进去（native-host/ 的显式放行见 is_packable）
     with zipfile.ZipFile(out_zip) as z:
-        bad = [n for n in z.namelist() if EXCLUDE_RE.search(n)]
+        bad = [n for n in z.namelist() if not is_packable(n)]
     if bad:
         sys.exit('\n错误：zip 中混入了不该打包的文件：%s' % bad)
 

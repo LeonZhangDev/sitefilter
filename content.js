@@ -237,9 +237,11 @@
   var hostOf = SFM.hostOf, panOf = SFM.panOf,
       parseMagnet = SFM.parseMagnet, decodeParam = SFM.decodeParam,
       decodeObfuscated = SFM.decodeObfuscated, b64decode = SFM.b64decode, cleanupDecoded = SFM.cleanupDecoded,
+      hashLooksTruncated = SFM.hashLooksTruncated,
       fmtBytes = SFM.fmtBytes, guessFromName = SFM.guessFromName, shortLabel = SFM.shortLabel,
       buildMagnetRaw = SFM.buildMagnetRaw, magnetRank = SFM.magnetRank,
-      sortLinks = SFM.sortLinks, mergeMagnet = SFM.mergeMagnet;
+      sortLinks = SFM.sortLinks, mergeMagnet = SFM.mergeMagnet,
+      probeBodyMagnets = SFM.probeBodyMagnets;
   // 代码多的地方，指针注释标出「东西去哪了」比留一片空白更好找。
   /* hostOf() / panOf() → magnet-core.js */
 
@@ -3741,23 +3743,30 @@
     var bodyText = '';
     if (document.body) bodyText = document.body.innerText || document.body.textContent || '';
     var m;
-    MAGNET_RE.lastIndex = 0;
-    while ((m = MAGNET_RE.exec(bodyText)) !== null) dispatchLink(arr, seen, m[0], 'magnet', null);
+    // 磁力：probeBodyMagnets() 会把被「隐形空白」（&nbsp; / U+FEFF / 全角空格…）截断的串
+    // 接回完整 —— 否则收下的是一条 hash 只剩半截、点开下不动的链接。
+    // 它顺带返回一份「已接走的尾巴被挖空」的文本（masked）给下面几处扫描用：
+    // 那段尾巴若再被 base64 / 裸 hash 扫到，一条链接会凭空变成两条。
+    // ed2k / thunder 仍走严格正则：它们没有「hash 长度」这种廉价的有效性判据，
+    // 无法安全地跨过隐形空白重接（详见 magnet-core.js::probeBodyMagnets）。
+    var magBody = probeBodyMagnets(bodyText);
+    for (var mi = 0; mi < magBody.list.length; mi++) dispatchLink(arr, seen, magBody.list[mi], 'magnet', null);
+    var scanText = magBody.masked;
     ED2K_RE.lastIndex = 0;
-    while ((m = ED2K_RE.exec(bodyText)) !== null) dispatchLink(arr, seen, m[0], 'ed2k', null);
+    while ((m = ED2K_RE.exec(scanText)) !== null) dispatchLink(arr, seen, m[0], 'ed2k', null);
     THUNDER_RE.lastIndex = 0;
-    while ((m = THUNDER_RE.exec(bodyText)) !== null) dispatchLink(arr, seen, m[0], 'thunder', null);
+    while ((m = THUNDER_RE.exec(scanText)) !== null) dispatchLink(arr, seen, m[0], 'thunder', null);
 
     // 未被 <a> 覆盖到的 .torrent 文本
     TORRENT_RE.lastIndex = 0;
-    while ((m = TORRENT_RE.exec(bodyText)) !== null) dispatchLink(arr, seen, m[0], 'torrent', null);
+    while ((m = TORRENT_RE.exec(scanText)) !== null) dispatchLink(arr, seen, m[0], 'torrent', null);
 
     // L3：正文里「百分号编码」的磁力（magnet%3A%3Fxt%3D...）
     MAGNET_PCT_RE.lastIndex = 0;
-    while ((m = MAGNET_PCT_RE.exec(bodyText)) !== null) dispatchLink(arr, seen, m[0], 'magnet', null);
+    while ((m = MAGNET_PCT_RE.exec(scanText)) !== null) dispatchLink(arr, seen, m[0], 'magnet', null);
     // L3：正文里 base64 包一层的磁力 token（decodeObfuscated 只会在解出真链接时才推，不误报）
     B64_TOKEN_RE.lastIndex = 0;
-    while ((m = B64_TOKEN_RE.exec(bodyText)) !== null) dispatchLink(arr, seen, m[0], 'magnet', null);
+    while ((m = B64_TOKEN_RE.exec(scanText)) !== null) dispatchLink(arr, seen, m[0], 'magnet', null);
 
     // L4 排序：按「信息完整度」分层，磁力优先（详见 sortLinks）
     sortLinks(arr);
@@ -4490,6 +4499,9 @@
         magnetRank: magnetRank,
         buildMagnetRaw: buildMagnetRaw,
         decodeObfuscated: decodeObfuscated,
+        probeBodyMagnets: probeBodyMagnets,
+        hashLooksTruncated: hashLooksTruncated,
+        MAGNET_RE: MAGNET_RE,
         matchRule: matchRule,
         probeLinks: probeLinks,
         dlLinks: function () { return dlLinks; },

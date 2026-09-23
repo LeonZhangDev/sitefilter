@@ -10,7 +10,12 @@
 
 ## Verification
 
-- SiteFilter: 23 suites, 1158 assertions, zero failures, plus package validation.
+- SiteFilter: 23 suites, 1198 assertions, zero failures, plus package validation.
+  (2026-09-24 updated: 修掉两条「本地门禁全绿、用户侧不可用」的缺陷 —— ① 发布包缺
+  `native-host/`（Tier B 的本机桥没随包分发，用户照设置页提示找不到 install.py）；
+  ② 正文里的隐形空白（U+FEFF / `&nbsp;` / 全角空格）会把磁力链接截断，而半截 hash 会被当
+  合法磁力收下（一条点开下不动的链接）。打包范围收成单一判据 `is_packable()`；
+  正文探测改走 `probeBodyMagnets()`。)
   (2026-09-23 updated: 拆 content.js —— 磁力解析层抽成 `magnet-core.js`，站点表与全部派生抽成
    `site-templates.js`（content / background / options 三端共用，不再有手抄副本）；
    `_load.js` 增加 backgroundBundle()，`_test_assembly.js` 装配守卫补上 service worker 侧。
@@ -36,4 +41,12 @@
 
 ## Next Step
 
-Clarify the missing Task 1–3 data-retention event with the user, without recovery or re-download unless separately authorized. The review-and-merge step is already done: both branches are on `main` and pushed. The release decision is settled too — `1.3.0` was cut on 2026-09-23 (version number only, no tag). Nothing else is pending on the SiteFilter side.
+- Run the manual acceptance checklist (`docs/verify/manual-acceptance.md`) and report failures per
+  its section E. **Start with the A segment** — it is the only part that can make an entire feature
+  unusable, and its failure mode is silent (a click that does nothing).
+- Clarify the missing Task 1–3 data-retention event with the user, without recovery or re-download
+  unless separately authorized. Per `decisions/`, task records and the download root belong to the
+  Collector side, so this is a Collector-side read-only investigation rather than a SiteFilter task.
+
+The review-and-merge step is done (both branches are on `main` and pushed), and `1.3.0` was cut on
+2026-09-23 (version number only, no tag). No other code work is pending on the SiteFilter side.

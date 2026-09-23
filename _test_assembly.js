@@ -105,5 +105,28 @@ check('content.js 是最后一个「通用」脚本（后面只允许站点专�
   if (offenders.length) console.log('        违规：' + offenders.join(', ') + '（应改用 require(\'./_load\').backgroundBundle()）');
 }
 
+/* Tier B（指定下载器）的本机代理必须进包。
+   这条发现不了 —— native-host/ 不被 manifest 引用，它是设置页文案让用户去跑的东西；
+   而 INCLUDE_DIRS 曾经只有 icons，EXCLUDE_RE 又顺手排掉所有 .py/.md。
+   两件事叠起来：zip 里没有 native-host/、用户照提示找不到 install.py，门禁却全绿。
+   行为侧（真的算一遍 collect）由 _test_native_host.py 复核，这里守白名单声明本身。 */
+{
+  const packager = fs.readFileSync(path.join(EXT, 'make_package.py'), 'utf8');
+  const grabList = name => {
+    const i = packager.indexOf(name + ' = [');
+    if (i === -1) return [];
+    return (packager.slice(i, packager.indexOf(']', i)).match(/'([^']+)'/g) || []).map(s => s.slice(1, -1));
+  };
+  const extra = grabList('INCLUDE_DIR_EXTRA');
+  const required = ['native-host/host.py', 'native-host/install.py'];
+  check('Tier B 的本机代理在显式放行名单里（host.py + install.py）',
+    required.every(f => extra.indexOf(f) !== -1));
+  check('native-host 在打包目录白名单里（以后往目录里加文件不会静默漏掉）',
+    grabList('INCLUDE_DIRS').indexOf('native-host') !== -1);
+  check('打包脚本只有一个「会不会进包」的判据 is_packable（不许各处各写一套过滤）',
+    /def is_packable\(rel\):/.test(packager) &&
+    (packager.match(/EXCLUDE_RE\.search\(/g) || []).length === 1);
+}
+
 console.log('\n' + (pass ? '全部通过' : '存在失败项'));
 process.exit(pass ? 0 : 1);

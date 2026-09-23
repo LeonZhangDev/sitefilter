@@ -266,6 +266,101 @@ const dlText = d => d.raw;
       hook.parseMagnet(raw).hash === HASH_A);
   }
 
+  /* ---------- 正文被「隐形空白」截断的磁力（第一层：纯函数） ----------
+   * 这条缺陷比「丢一条」更坏：URL_STOP 含 \s（JS 空白类），而 U+FEFF / U+00A0 /
+   * U+3000 / U+2009 都算 JS 空白 → 正则在此截断 → parseMagnet 只要求「hash 非空」，
+   * 于是**半截 hash 会被当合法磁力收下**：用户看到一条下不动的链接，页面上毫无提示。
+   * 修法见 magnet-core.js::magnetCandidates（只在 hash 长度可疑时才跨过隐形空白重接）。 */
+  {
+    const INVISIBLES = [
+      ['U+FEFF（BOM 型 ZWNBSP）', '\ufeff'],
+      ['U+00A0（&nbsp;）', '\u00a0'],
+      ['U+3000（全角空格）', '\u3000'],
+      ['U+2009（thin space）', '\u2009'],
+    ];
+    INVISIBLES.forEach(([name, ch]) => {
+      const raw = 'magnet:?xt=urn:btih:' + HASH_A.slice(0, 8) + ch + HASH_A.slice(8);
+      // 先证明前提成立：严格正则会在此截断。这条断言防的是「测试悄悄失效」——
+      // 哪天 URL_STOP 不再含 JS 空白类，它会红，提示这一节该重写。
+      hook.MAGNET_RE.lastIndex = 0;
+      const strict = hook.MAGNET_RE.exec(raw);
+      check('[截断][前提][' + name + '] 严格正则确实在此截断（残串只剩 8 位 hash）',
+        !!strict && strict[0].indexOf(ch) === -1 &&
+        hook.parseMagnet(strict[0]).hash === HASH_A.slice(0, 8));
+      const cds = hook.probeBodyMagnets(raw).list;
+      check('[截断][' + name + '] 候选只有 1 条（残串被替换，不是并排两条）', cds.length === 1);
+      const p = cds.length === 1 ? hook.parseMagnet(cds[0]) : null;
+      check('[截断][' + name + '] hash 被补成完整 40 位', !!p && p.hash === HASH_A);
+    });
+
+    // 截断点之后还有别的参数时也要接对（别接半截就停）
+    const withDn = 'magnet:?xt=urn:btih:' + HASH_A.slice(0, 8) + '\ufeff' + HASH_A.slice(8) + '&dn=x.mkv';
+    const pd = hook.parseMagnet(hook.probeBodyMagnets(withDn).list[0]);
+    check('[截断] 截断点之后还有 &dn= 时同样接对（hash 完整、参数不丢）',
+      !!pd && pd.hash === HASH_A && pd.dn === 'x.mkv');
+  }
+
+  /* ---------- 截断修复的负面：修它不能把别的弄坏 ---------- */
+  {
+    // ① 完整链接后面跟「&nbsp; + 正文」→ 不能把正文吃进 hash（宁少不错）
+    const latin = hook.probeBodyMagnets('magnet:?xt=urn:btih:' + HASH_A + '\u00a0Some text here').list;
+    check('[截断][负面] 完整 hash 后跟 &nbsp; 与拉丁正文：不吃正文',
+      latin.length === 1 && hook.parseMagnet(latin[0]).hash === HASH_A);
+    const cjk = hook.probeBodyMagnets('magnet:?xt=urn:btih:' + HASH_A + '\u00a0下载说明文字').list;
+    check('[截断][负面] 完整 hash 后跟 &nbsp; 与中文正文：不吃正文',
+      cjk.length === 1 && hook.parseMagnet(cjk[0]).hash === HASH_A);
+
+    // ② 两条链接只隔一个 &nbsp;（<a>A</a>&nbsp;<a>B</a> 的文本形态）→ 不能粘成一条
+    const two = hook.probeBodyMagnets(
+      'magnet:?xt=urn:btih:' + HASH_A + '\u00a0magnet:?xt=urn:btih:' + HASH_B).list;
+    check('[截断][负面] 两条链接只隔一个 &nbsp;：仍是 2 条（不粘、不丢）', two.length === 2);
+    const hs = two.map(c => (hook.parseMagnet(c) || {}).hash);
+    check('[截断][负面] 两条各自的 hash 都完整',
+      hs.indexOf(HASH_A) !== -1 && hs.indexOf(HASH_B) !== -1);
+
+    // ③ 真是被真空格拆开的残串 → 不猜（猜错比不猜更坏）
+    const spaced = hook.probeBodyMagnets(
+      'magnet:?xt=urn:btih:' + HASH_A.slice(0, 8) + ' ' + HASH_A.slice(8)).list;
+    check('[截断][负面] 被真空格拆开的残串不猜（保持原样）',
+      spaced.length === 1 && hook.parseMagnet(spaced[0]).hash === HASH_A.slice(0, 8));
+
+    // ④ 零宽 U+200B 不在 JS 空白类里 → 本来就能解，行为不受本次改动影响
+    const zw = hook.probeBodyMagnets(
+      'magnet:?xt=urn:btih:' + HASH_A.slice(0, 8) + '\u200b' + HASH_A.slice(8)).list;
+    check('[截断][对照] U+200B（不属于 JS 空白类）本来就被解出完整 hash',
+      zw.length === 1 && hook.parseMagnet(zw[0]).hash === HASH_A);
+  }
+
+  /* ---------- hash 长度判据：只当修复的触发条件，不做过滤 ---------- */
+  {
+    const pk = s => hook.hashLooksTruncated(hook.parseMagnet(s));
+    check('[判据] v1 40 位 hex → 不是残串', pk('magnet:?xt=urn:btih:' + HASH_A) === false);
+    check('[判据] v1 32 位 base32 → 不是残串',
+      pk('magnet:?xt=urn:btih:abcdefghijklmnopqrstuvwxyz234567') === false);
+    check('[判据] 8 位 hex → 判为可疑（截断的典型形态）',
+      pk('magnet:?xt=urn:btih:c12fe1aa') === true);
+    check('[判据] v2 64 位 multihash → 不是残串',
+      pk('magnet:?xt=urn:btmh:' + HASH_V2) === false);
+    check('[判据] v2 68 位（0x1220 前缀的真实形态）→ 不是残串',
+      pk('magnet:?xt=urn:btmh:1220' + HASH_V2) === false);
+    // 挖空：被接走的尾巴不能再被 base64 / 裸 hash 扫描认领（否则一条变两条）
+    check('[判据] 挖空只挖被接走的尾巴，不动其它文本',
+      (function () {
+        const head = '前缀保持不变 ';
+        const r = hook.probeBodyMagnets(head + 'magnet:?xt=urn:btih:' + HASH_A.slice(0, 8)
+          + '\u00a0' + HASH_A.slice(8) + ' 尾巴之后' + ('x'.repeat(40)));
+        return r.masked.indexOf(head) === 0 &&
+          r.masked.indexOf(HASH_A.slice(0, 8)) !== -1 &&
+          r.masked.indexOf(HASH_A.slice(8)) === -1 &&
+          r.masked.indexOf('尾巴之后') !== -1 &&
+          r.masked.length === (head + 'magnet:?xt=urn:btih:' + HASH_A.slice(0, 8)
+            + '\u00a0' + HASH_A.slice(8) + ' 尾巴之后' + ('x'.repeat(40))).length;
+      })());
+    // 关键：判据只决定「要不要试着往后接」，不收窄既有行为（短 hash 照旧收下）
+    check('[判据] 只做触发不做过滤：短 hash 仍被 parseMagnet 收下（既有行为不变）',
+      !!hook.parseMagnet('magnet:?xt=urn:btih:c12fe1aa'));
+  }
+
   /* ================================================================
    * L3 反混淆：把藏起来的磁力解出来（直测 decodeObfuscated）
    * ================================================================ */
@@ -322,6 +417,25 @@ const dlText = d => d.raw;
       mags.some(d => d.magnet && d.magnet.hash === HASH_V2 && d.magnet.algo === 'btmh'));
     check('[L3][面板] 正文零宽字符磁力被还原', mags.some(d => d.magnet && d.magnet.hash === HASH_A));
     check('[L3][面板] 共 3 条磁力（无重复、无漏）', mags.length === 3);
+  }
+
+  /* 正文截断端到端：站点拿 &nbsp; / U+FEFF 把 infohash 打断 —— 面板必须给出完整串。
+     修复前的真实行为是「列表里多一条 hash 只有 8 位、点开下不动的链接」。 */
+  {
+    const SPLIT_HTML = `<!doctype html><html><body>
+      <div class="wrap">
+        <div id="p1">magnet:?xt=urn:btih:${HASH_A.slice(0, 8)}&nbsp;${HASH_A.slice(8)}</div>
+        <div id="p2">magnet:?xt=urn:btih:${HASH_B.slice(0, 8)}&#65279;${HASH_B.slice(8)}</div>
+      </div></body></html>`;
+    const { win } = build({ html: SPLIT_HTML });
+    await sleep(900);
+    const h = hookOf(win);
+    const mags = h.dlLinks().filter(d => d.type === 'magnet');
+    check('[截断][面板] 只出现 2 条（残串被替换，不是 4 条）', mags.length === 2);
+    check('[截断][面板] &nbsp; 打断的 infohash 在面板里是完整的 40 位',
+      mags.some(d => d.magnet && d.magnet.hash === HASH_A));
+    check('[截断][面板] U+FEFF 打断的 infohash 在面板里是完整的 40 位',
+      mags.some(d => d.magnet && d.magnet.hash === HASH_B));
   }
 
   /* ================================================================

@@ -7,7 +7,8 @@
  * 也给后续「让设置页也能解析磁力」留了口子。
  *
  * 边界：
- *   在本模块 —— 链接串 ⇒ 结构化数据（parseMagnet / decodeObfuscated / fmtBytes …）
+ *   在本模块 —— 文本 / 链接串 ⇒ 候选与结构化数据（parseMagnet / decodeObfuscated /
+ *              probeBodyMagnets / fmtBytes …）
  *   不在这里 —— 扫 DOM、装配结果集、页面打标记（那些仍在 content.js::probeLinks）
  *
  * content.js 通过 globalThis.SF_MAGNET 使用；Node 测试 require 亦可。
@@ -50,6 +51,28 @@
   var MAGNET_HASH_RE = /xt=urn:(btih|btmh):([^&\s]+)/i;
   /* magnet 链接里常见的「体积」参数：xl 是精确字节数，其他几个是各站的私有写法 */
   var MAGNET_SIZE_KEYS = ['xl', 'size', 'length', 'fsize'];
+
+  /* 「隐形空白」：JS 的 \s 把它们都算作空白，站点却常拿它们做反抓取 —— 插进
+     infohash 中间（U+FEFF 是复制粘贴带出来的 BOM 型字符，U+00A0 是 `&nbsp;`，
+     U+2000–U+200A / U+3000 是排版空格）。URL_STOP 里含 \s，于是 MAGNET_RE
+     会在它们处**截断**；而 parseMagnet 只要求「hash 非空」，所以半截 hash
+     （实测 8 位）会被当合法磁力收下 —— 用户在列表里看到一条**下不动的链接**，
+     页面上没有任何提示。实测会截断的：U+FEFF / U+00A0 / U+3000 / U+2009。 */
+  var INVISIBLE_WS = '\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff';
+  var INVISIBLE_WS_RE = new RegExp('[' + INVISIBLE_WS + ']', 'g');
+  /* 截断点之后、到下一个「真分隔符」为止的尾巴。两处讲究：
+     · 刻意不用 \s —— 尾巴里可能还夹着更多隐形空白，得一起带走；
+     · 遇到新链接的协议头就停（(?!…) 那段）—— 否则 `<a>A</a>&nbsp;<a>B</a>`
+       这种「两条链接只隔一个 &nbsp;」的页面会把 B 整条吞进 A 的尾巴里，
+       本来能找到的两条一起弄丢。 */
+  var URL_TAIL_RE = new RegExp(
+    '[' + INVISIBLE_WS + ']+((?:(?!(?:magnet|ed2k|thunder|https?|ftp):)'
+    + '[0-9A-Za-z%._~+\\-=&/?:])+)');
+  /* hash 长度像不像一个真正的 infohash。**只当修复的触发条件，不做过滤用** ——
+     现在收下的任何长度都照旧收下（不改既有行为），只是「长度不像」时才试着往后接。
+     v1(btih)：40 hex 或 32 base32；v2(btmh)：multihash，hex 且 ≥64 位、偶数长度。 */
+  var HASH_V1_HEX_RE = /^[0-9a-f]{40}$/i;
+  var HASH_V1_B32_RE = /^[a-z2-7]{32}$/i;
 
   function hostOf(u) {
     try { return new URL(u, location.href).hostname; } catch (e) { return ''; }
@@ -186,6 +209,67 @@
     return null;
   }
 
+  /* hash 长度是否可疑（判据见上面 HASH_V1_*_RE 的注释）。 */
+  function hashLooksTruncated(m) {
+    if (!m || !m.hash) return false;
+    var h = m.hash;
+    if (m.algo === 'btmh') {
+      return !(h.length >= 64 && h.length % 2 === 0 && /^[0-9a-f]+$/i.test(h));
+    }
+    return !(HASH_V1_HEX_RE.test(h) || HASH_V1_B32_RE.test(h));
+  }
+
+  /* 正文磁力探测：把「被隐形空白截断」的磁力链补回完整形态。一次返回两样东西 ——
+       list    最终候选（每处一到一条，被截断的已接回完整）
+       masked  把「已接进候选的尾巴」挖成空格的文本，供后面的 base64 / 裸 hash
+               扫描使用。不挖会怎样：那段尾巴（去掉前 8 位后的 32 位 hex）仍然
+               躺在正文里，于是被当成一个独立的「32 位裸 hash」收下 —— 一条链接
+               变成两条，其中一条 hash 不完整、点开下不动。
+
+     为什么不干脆把这些字符从 URL_STOP 的排除集里去掉：`&nbsp;` 本来就是 HTML 里
+     合法的分隔符（这正是它的用途）。一旦不再截断，`链接 + &nbsp; + 另一条链接`
+     会被粘成一条坏串（把本来能找到的两条一起弄丢），`链接 + &nbsp; + 正文`
+     也会把正文吃进 hash。所以这里**只在严格匹配已经解析出可疑 hash 时**才尝试
+     跨越，且接出来的候选必须自身解析出像样的 hash 才采用 —— 拿不准就保持原样。
+     好处是「本来就能解析的链接」行为一字不变（零回归）。
+
+     每处截断只出一条：修复成功就用完整串**替换**残串 —— 否则同一条链接会在列表里
+     出现两张卡片，其中一张还下不动。
+
+     只救 infohash 被截断：那会让整条链接下不动。dn / tr 里夹了隐形空白只是参数
+     残缺（客户端会忽略），没有「长度」这种廉价判据，不在这里猜。 */
+  function probeBodyMagnets(text) {
+    var out = [], m;
+    if (!text) return { list: out, masked: '' };
+    var masked = text;
+    MAGNET_RE.lastIndex = 0;
+    while ((m = MAGNET_RE.exec(text)) !== null) {
+      var cand = m[0];
+      var p = parseMagnet(cand);
+      if (p && hashLooksTruncated(p)) {
+        var tm = URL_TAIL_RE.exec(text.slice(m.index + cand.length));
+        if (tm) {
+          var joined = (cand + tm[1]).replace(INVISIBLE_WS_RE, '');
+          var jp = parseMagnet(joined);
+          if (jp && !hashLooksTruncated(jp)) cand = joined;
+        }
+      }
+      out.push(cand);
+      if (cand !== m[0]) {
+        // 尾巴已被接进候选：① 跳过它，别再从里面扫出个「半截」；
+        // ② 在 masked 里挖空（等长空格替换，所以下标仍与 text 对齐）。
+        // tm[0] = 隐形空白 + 尾巴（URL_TAIL_RE 没有 g 标志，lastIndex 不会动，
+        // 别拿它当长度 —— 那样挖空长度恒为 0，等于没挖）
+        var tailStart = m.index + m[0].length;
+        var tailEnd = tailStart + tm[0].length;
+        MAGNET_RE.lastIndex = tailEnd;
+        masked = masked.slice(0, tailStart)
+          + masked.slice(tailStart, tailEnd).replace(/./g, ' ') + masked.slice(tailEnd);
+      }
+    }
+    return { list: out, masked: masked };
+  }
+
   // 字节数 → 人类可读。用 1024 进制（与 BT 客户端口径一致）。
   // 整数不带小数（1KB 而不是 1.00KB）—— 磁力体积大多数是整数 MB/GB，带两位小数反而显得像估算值。
   function fmtBytes(n) {
@@ -320,7 +404,9 @@
     buildMagnetRaw: buildMagnetRaw,
     magnetRank: magnetRank,
     sortLinks: sortLinks,
-    mergeMagnet: mergeMagnet
+    mergeMagnet: mergeMagnet,
+    hashLooksTruncated: hashLooksTruncated,
+    probeBodyMagnets: probeBodyMagnets
   });
 
   if (typeof module !== 'undefined' && module.exports) { module.exports = API; }

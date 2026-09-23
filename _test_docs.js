@@ -72,6 +72,10 @@ const manifest = JSON.parse(read('manifest.json'));
     ['docs/features/xchina-collector-integration.md', 'has not been merged', '集成已在 main 上'],
     ['docs/requirements/README.md', '仍未进行', '004 报告里已有完整验证记录'],
     ['docs/requirements/README.md', '其余待定', '003 的 ①–⑩ 已全部有结论'],
+    ['docs/verify/manual-acceptance.md', '只有 20 个条目',
+      'F1 已修：native-host/ 随包分发（zip 20 → 23 个条目）'],
+    ['docs/verify/manual-acceptance.md', '被 L2「残缺串丢弃」',
+      'F2 已修：截断串其实被当合法磁力收下（一条点开下不动的链接），现在补回完整串'],
   ];
   STALE.forEach(([f, bad, why]) => {
     check(f + ' 不再宣称「' + bad + '」（' + why + '）', readDoc(f).indexOf(bad) === -1);

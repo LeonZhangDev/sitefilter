@@ -206,5 +206,26 @@ check('[进程] 协议版本不对 → incompatible-protocol',
 check('[进程] 后续正常请求仍被处理（不因前一条出错而中断）',
       len(res) >= 3 and res[2].get('ok') is True)
 
+# ---------------------------------------------------------------- 打包范围
+# Tier B 要能用，本机代理就得跟着扩展一起发出去。这条不能靠「文档写了」就算数 ——
+# INCLUDE_DIRS 曾经只有 icons，而 EXCLUDE_RE 顺手排掉所有 .py/.md：两件事叠起来，
+# zip 里没有 native-host/，设置页却让用户「运行 native-host/install.py」。
+# 所以这里直接调打包脚本自己的判据，而不是在旁边复述一遍规则。
+_mp_spec = importlib.util.spec_from_file_location('sf_make_package',
+                                                  os.path.join(HERE, 'make_package.py'))
+mp = importlib.util.module_from_spec(_mp_spec)
+_mp_spec.loader.exec_module(mp)
+
+_packed = set(mp.collect(quiet=True))
+for _rel in ('native-host/host.py', 'native-host/install.py', 'native-host/README.md'):
+    check('[打包] %s 会进发布包' % _rel, _rel in _packed)
+check('[打包] 与 make_package.NATIVE_HOST_REQUIRED 一致（Tier B 的必需项都在）',
+      all(r in _packed for r in mp.NATIVE_HOST_REQUIRED))
+check('[打包] 例外没被放大：测试 / 打包脚本 / 根文档仍不进包',
+      not mp.is_packable('_test_native_host.py') and not mp.is_packable('make_package.py')
+      and not mp.is_packable('ci.py') and not mp.is_packable('README.md'))
+check('[打包] 例外只认这三个文件：别处的 .py 照样被排除',
+      not mp.is_packable('tools/helper.py'))
+
 print('\n本机桥（host.py）专项测试全部通过 ✅' if _pass else '\n本机桥（host.py）专项测试存在失败 ❌')
 sys.exit(0 if _pass else 1)

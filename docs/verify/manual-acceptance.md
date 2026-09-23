@@ -23,13 +23,13 @@
 | 扩展 ID | `jaihdgjnnpmiabeoefmihmjhoodcjlhf` | 由 `manifest.json` 的 `key` 决定。**必须逐字符一致**，否则本机桥的 `allowed_origins` 会拒绝连接 |
 | 本机桥 host 名 | `dev.zackzhang.sitefilter_magnet` | |
 | 注册表位置 | `HKCU\Software\{Google\Chrome｜Microsoft\Edge｜Chromium}\NativeMessagingHosts\dev.zackzhang.sitefilter_magnet` | 默认值 = host 清单 json 的绝对路径 |
-| 扩展目录 | `dist/sitefilter-1.3.0.zip` 解压后的目录 | |
+| 扩展目录 | 最新一版 `dist/sitefilter-*.zip` 解压后的目录 | |
 | 测试页 | 任意 `http(s)` 页面 | 磁力用例全部靠控制台注造，不依赖任何真实站点 |
 
 **两个前提，先确认**（详见 F 段）：
 
-1. **`native-host/` 不在发布包里。** `dist/sitefilter-1.3.0.zip` 只有 20 个条目，
-   没有 `native-host/install.py`。跑 A 段必须手边有源码仓库。
+1. **`native-host/` 随包分发**（F1 已修）：解压出来的扩展目录下就有
+   `native-host/install.py`，跑 A 段不需要另外准备源码仓库。
 2. **本机需要 Python**（`install.py` 与 `host.py` 都是 Python）。
    先跑 `python --version`；若命令不存在，下文一律用 `py -3` 代替 `python`。
 
@@ -285,31 +285,56 @@ Tier B 的回退全靠它，所以必须单独确认。
 
 ## F. 准备这份清单时已经发现的问题
 
-这两条**不需要跑就知道**，一并记在这里，免得混进走查结果：
+这两条**不需要跑走查就能确认**。都已经修掉了（见 CHANGELOG 的 `[Unreleased]`），留档
+有两个用处：一是免得它们混进走查结果，二是下面写了「走查时怎么确认它真的好了」。
 
-### F1 · 发布包缺 `native-host/`（会影响真实用户）
+### F1 · 发布包缺 `native-host/` —— 已修
 
-`make_package.py` 的 `INCLUDE_DIRS = ['icons']`，`dist/sitefilter-1.3.0.zip` 只有 20 个条目
-（`collector-native.js`、`magnet-native.js` 在，但 `native-host/` 整个目录不在）。
+原来 `make_package.py` 的 `INCLUDE_DIRS = ['icons']`，而排除规则 `EXCLUDE_RE` 又滤掉所有
+`.py` / `.md`。两件事叠起来：打出来的 zip 里没有 `native-host/`，而设置页写着「请先运行
+`native-host/install.py`」—— 从 zip 装的用户找不到那个文件，Tier B 对他们实际不可用，
+而本地门禁全绿（这个目录不被 manifest 引用，没有任何检查会碰到它）。
 
-后果：**从 zip 装扩展的用户拿不到 `install.py`**，而设置页却写着「请先运行
-`native-host/install.py`」—— 他们找不到这个文件。Tier B 对这类用户实际不可用。
+现在 `native-host/` 进了目录白名单，`host.py` / `install.py` / `README.md` 三个文件显式放行
+（`INCLUDE_DIR_EXTRA`），「会不会进包」也收成**唯一**判据 `is_packable()` —— 打包、打包前校验、
+打包后扫 zip 三处共用，不再各写一套过滤。zip 条目 20 → 23。
 
-### F2 · 正文文本分支里的零宽字符会被截断（U+FEFF / U+00A0）
+**走查时怎么确认**：A1 里解压出来的目录下就该有 `native-host\install.py`（不必再去仓库取）。
 
-`MAGNET_RE` 用 `URL_STOP = [^\s"'<>）)】\]]+` 作边界，而 JS 的 `\s` **包含 U+FEFF 与 U+00A0**。
-实测（`node` 直接跑正则）：
+### F2 · 正文里的「隐形空白」会把磁力链接截断 —— 已修
 
-| 插入的字符 | 正文分支拿到的串 | 结果 |
-|---|---|---|
-| U+200B（ZERO WIDTH SPACE） | 完整（结尾 `77889901`） | 能解 ✔ |
-| U+2060（WORD JOINER） | 完整 | 能解 ✔ |
-| **U+FEFF**（ZWNBSP / BOM 型） | **截断**（结尾 `c12fe1aa`） | hash 残缺 → 被 L2「残缺串丢弃」→ **静默丢失** ✘ |
-| **U+00A0**（NBSP） | **截断** | 同上 ✘ |
+原来 `MAGNET_RE` 用 `URL_STOP = [^\s"'<>）)】\]]+` 作边界，而 JS 的 `\s` **包含** U+FEFF
+（复制粘贴带出的 BOM 型字符）、U+00A0（`&nbsp;`）、U+3000（全角空格）、U+2009 —— 站点恰恰常把
+这些字符塞进 infohash 中间做反抓取，正则就在那里截断。
 
-`decodeObfuscated` 第 ① 步确实会去 `\ufeff` 与 `\u00a0`，但**在正文路径上救不回来** ——
-正则已经先截断，那两个字符根本不在候选串里。`<a href>` / `data-*` 分支读 `getAttribute`，
-拿到的是完整串，所以**只有正文文本路径有这个缺口**。
+**这里纠正一处原先写错的判断**：截断串并不是「被 L2 当残缺串丢弃」，而是**被当合法磁力收下** ——
+`parseMagnet` 只要求「hash 非空」，所以 `magnet:?xt=urn:btih:c12fe1aa`（8 位）会成为列表里的
+一条。症状因此比「少一条」更坏：用户看到一条**点开下不动**的链接，页面上没有任何提示，
+而它看起来是成功的。
 
-这是「宣称支持零宽混淆」与实际能力之间的差：零宽里只有一部分（不在 `\s` 里的那些）能在正文路径上解出。
-C 段可以顺手验证（把 ① 的 `\u200b` 换成 `\ufeff` 再跑一次，预期在下载页看不到那一条）。
+| 插入的字符 | 严格正则拿到的串 | 修复前 | 修复后 |
+|---|---|---|---|
+| U+200B（ZERO WIDTH SPACE） | 完整 | 能解 ✔（它不在 `\s` 里） | 不变 ✔ |
+| U+2060（WORD JOINER） | 完整 | 能解 ✔ | 不变 ✔ |
+| **U+FEFF**（ZWNBSP / BOM 型） | 截断（结尾 `c12fe1aa`） | 半截 hash 的坏链接 ✘ | 完整 40 位 ✔ |
+| **U+00A0**（`&nbsp;`） | 截断 | 同上 ✘ | 完整 ✔ |
+| **U+3000**（全角空格） / **U+2009** | 截断 | 同上 ✘ | 完整 ✔ |
+
+修法（`magnet-core.js::probeBodyMagnets`）：**只在严格候选解析出的 hash 长度不像有效 infohash
+时**（v1 需 40 hex 或 32 base32，v2 需 ≥64 位偶数 hex）才试着跨过隐形空白把尾巴接回来，且接出
+的候选必须自身也解析出像样的 hash 才采用，否则保持原样。于是：
+
+- `链接 + &nbsp; + 另一条链接` 不会被粘成一条（两条各自都能解析，根本不触发修复）；
+- `链接 + &nbsp; + 正文` 不会把正文吃进 hash（接不出来就放弃）；
+- 被**真空格**拆开的残串不猜（猜错比不猜更坏）；
+- 本来就能解析的链接行为一字不变（零回归）。
+
+顺带堵住同一处缺陷的另一个面：被接走的尾巴若留在正文里，会被后面的 base64 / 裸 hash 扫描再当成
+一个独立的「32 位裸 hash」收下 —— 一条链接变成两条（其中一条 hash 不完整）。所以
+`probeBodyMagnets()` 会同时返回一份把「已认领尾巴」挖空的文本，供后续扫描使用。
+
+**有意不覆盖**（不是遗漏）：被真空格拆开的串；`dn` / `tr` 参数里夹的隐形空白（只影响参数完整性，
+客户端会忽略，且没有「长度」这种廉价判据可判）。
+
+**走查时怎么确认**：C 段把 ① 的 `\u200b` 换成 `\ufeff`（或换成 `&nbsp;` 实体）再跑一次，
+**预期在下载页看到完整的那一条**，而不是半截 hash 或两条。
