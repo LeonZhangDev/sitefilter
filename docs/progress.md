@@ -5,8 +5,7 @@
 - XChina Collector integration is implemented on `main` in **both** repositories and pushed to the public
   remotes (`LeonZhangDev/sitefilter`, `LeonZhangDev/universal-web-collector`), verified 2026-09-23 with
   `git ls-remote`. The earlier "not merged / not published" status no longer applies.
-- The integration's user-facing notes still sit under `[Unreleased]` in `CHANGELOG.md`; no version heading
-  covers them yet.
+- The integration's user-facing notes are released under `1.3.0` (2026-09-23); `manifest.json` carries that version.
 - Task 10 browser behavior and output integrity passed, but the data-retention gate remains open: Tasks 1–3 were previously verified and later found missing from the same live database and numbered download root. The deletion source is unknown and awaits user clarification. Task 4 remains the current retained live acceptance task.
 
 ## Verification
@@ -18,8 +17,9 @@
    门禁 22 套 / 1141 项断言全绿（当时），打包 182 KB。)
   (2026-09-22 updated: 需求 002 三档屏蔽 L1、番号站数量补足 L2、建议 ②④⑤ 已落地；
    磁力深度 L2 全字段解析 + L4 同 infohash 归并/排序已落地，新增 `_test_magnet.js`。)
-- SiteFilter feature work is on `main` (head `ffed036`) and pushed to the public remote. It is
-  **implemented and CI-green**; only the version-number step is outstanding.
+- SiteFilter feature work is on `main` and pushed to the public remote. It is **implemented, CI-green,
+  and released as `1.3.0`** — version number only, no tag, matching this repository's history
+  (`1.0.1` / `1.1.0` / `1.2.0` carry no tags either).
   (2026-09-23 updated: 拆 `content.js` 完成 —— 磁力解析层抽成 `magnet-core.js`，站点表与全部派生抽成
   `site-templates.js`，三端共用同一份，不再有手抄副本。文档里的「未合并 / 未推送」说法已随之更正。)
 - Universal Web Collector: 692 passed, 1 skipped, with one upstream deprecation warning. The final focused shutdown and HLS review suite passed 51 tests with no blocker.
@@ -36,4 +36,4 @@
 
 ## Next Step
 
-Clarify the missing Task 1–3 data-retention event with the user, without recovery or re-download unless separately authorized. The review-and-merge step is already done: both branches are on `main` and pushed. What remains is a **release decision** — the accumulated `CHANGELOG [Unreleased]` notes (magnet depth L2–L4, downloader hand-off Tier A/B, hidden-item reveal, rule-check unification, backfill guard, the two module extractions, LICENSE) are not covered by any version number, so cut one once the user approves.
+Clarify the missing Task 1–3 data-retention event with the user, without recovery or re-download unless separately authorized. The review-and-merge step is already done: both branches are on `main` and pushed. The release decision is settled too — `1.3.0` was cut on 2026-09-23 (version number only, no tag). Nothing else is pending on the SiteFilter side.
