@@ -15,6 +15,22 @@ function check(name, value) {
 
 function wait(ms = 0) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
+/* 为什么需要 waitUntil：这一组测例用的是 `pollMs: 2` 的轮询 + 固定 sleep 预算
+   （`await wait(8)` / `await wait(80)`）。机器一忙（门禁同时跑别的套件时就是这样），
+   固定预算会不够 —— 表现是「同一套件跑三次，红的条目每次都不一样」（实测：2 / 2 / 0）。
+   凡是「等某个可观测的事发生」的地方，改成等条件：成立立即返回，超时才判失败。
+   反过来，「断言不该发生的事」（single-flight / 取消后不再发请求）仍然要真的等一段
+   固定时间 —— 那是留给错误实现一次犯错的机会，不能提前返回。 */
+function sendCount(h, type) { return h.sent.filter(x => x.type === type).length; }
+async function waitUntil(pred, timeoutMs = 3000, stepMs = 1) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (pred()) return true;
+    if (Date.now() > deadline) return false;
+    await wait(stepMs);
+  }
+}
+
 function fixture(url, heading = '<h1>测试标题</h1>', options = {}) {
   const dom = new JSDOM('<!doctype html><html><body>' + heading + '<div class="cf-host"></div></body></html>', {
     url, runScripts: 'outside-only', pretendToBeVisual: true,
@@ -335,10 +351,12 @@ async function run() {
     h.responses.push({ ok: true, result: { found: true, task: { id: 90, status: 'pending', resource_counts: { total: 4, done: 0, failed: 0, filtered: 0 } } } });
     h.responses.push({ ok: true, result: { id: 90, status: 'downloading', progress: 50, resource_counts: { total: 4, done: 2, failed: 0, filtered: 0 } } });
     h.responses.push({ ok: true, result: { id: 90, status: 'success', progress: 100, resource_counts: { total: 4, done: 4, failed: 0, filtered: 0 } } });
-    h.api.init(); await wait(100);
-    check('restored active task polls pending through downloading to success', /#90/.test(h.document.querySelector('.sf-xchina-status').textContent) &&
-      /\u5df2\u5b8c\u6210/.test(h.document.querySelector('.sf-xchina-status').textContent) &&
-      h.sent.filter(x => x.type === 'sf_collector_get_task').length === 2);
+    const done90 = () => /#90/.test(h.document.querySelector('.sf-xchina-status').textContent) &&
+      /\u5df2\u5b8c\u6210/.test(h.document.querySelector('.sf-xchina-status').textContent);
+    h.api.init();
+    await waitUntil(done90);
+    check('restored active task polls pending through downloading to success', done90() &&
+      sendCount(h, 'sf_collector_get_task') === 2);
     const stoppedAt = h.sent.length; await wait(10);
     check('terminal success stops page polling', h.sent.length === stoppedAt);
     h.api.destroy();
@@ -348,9 +366,11 @@ async function run() {
     const h = fixture('https://xchina.co/photo/id-6664761937f5a.html', '<h1>测试标题</h1>', { pollMs: 2 });
     h.responses.push({ ok: true, result: { found: true, task: { id: 91, status: 'pending', resource_counts: { total: 2, done: 0 } } } });
     h.responses.push({ ok: true, result: { id: 91, status: 'failed', progress: 25, resource_counts: { total: 2, done: 0, failed: 1 } } });
-    h.api.init(); await wait(80);
-    check('failed poll renders terminal state and stable retry guidance', /\u5931\u8d25/.test(h.document.querySelector('.sf-xchina-status').textContent) &&
-      /\u67e5\u770b\u5e76\u91cd\u8bd5/.test(h.document.querySelector('[data-sf-collector-next-action]').textContent));
+    const failed91 = () => /\u5931\u8d25/.test(h.document.querySelector('.sf-xchina-status').textContent) &&
+      /\u67e5\u770b\u5e76\u91cd\u8bd5/.test(h.document.querySelector('[data-sf-collector-next-action]').textContent);
+    h.api.init();
+    await waitUntil(failed91);
+    check('failed poll renders terminal state and stable retry guidance', failed91());
     const stoppedAt = h.sent.length; await wait(10);
     check('terminal failure stops page polling', h.sent.length === stoppedAt);
     h.api.destroy();
@@ -361,12 +381,15 @@ async function run() {
     let releasePoll;
     h.responses.push({ ok: true, result: { found: true, task: { id: 92, status: 'pending', resource_counts: { total: 1, done: 0 } } } });
     h.responses.push(new Promise(resolve => { releasePoll = resolve; }));
-    h.api.init(); await wait(8);
-    check('page polling is single-flight while a status request is pending', h.sent.filter(x => x.type === 'sf_collector_get_task').length === 1);
+    h.api.init();
+    await waitUntil(() => sendCount(h, 'sf_collector_get_task') >= 1);
+    check('page polling is single-flight while a status request is pending', sendCount(h, 'sf_collector_get_task') === 1);
     h.window.history.pushState({}, '', '/video/id-6aaee7c9a12e8.html'); h.api.reconcile();
     releasePoll({ ok: true, result: { id: 92, status: 'success', progress: 100, resource_counts: { total: 1, done: 1 } } });
-    await wait(10);
-    check('navigation cancels polling and ignores stale task responses', h.sent.filter(x => x.type === 'sf_collector_get_task').length === 1 &&
+    // 这里断言的是「不该再发请求」—— 等待要够长，才留得下犯错的机会；
+    // 「第一条已经发出」由上面的 waitUntil 保证。
+    await wait(40);
+    check('navigation cancels polling and ignores stale task responses', sendCount(h, 'sf_collector_get_task') === 1 &&
       !/#92/.test(h.document.querySelector('.sf-xchina-status').textContent));
     h.api.destroy();
   }
@@ -376,9 +399,11 @@ async function run() {
     await openReadyPreview(h);
     h.responses.push({ ok: true, result: { task_id: 93, status: 'pending', disposition: 'created', content_key: 'xchina_gallery:6664761937f5a' } });
     h.responses.push({ ok: true, result: { id: 93, status: 'success', progress: 100, resource_counts: { total: 1, done: 1 } } });
-    h.document.querySelector('[data-action="confirm"]').click(); await wait(80);
-    check('new active task starts bounded page polling', h.sent.some(x => x.type === 'sf_collector_get_task' && x.task_id === 93) &&
-      /\u5df2\u5b8c\u6210/.test(h.document.querySelector('.sf-xchina-status').textContent));
+    const polled93 = () => h.sent.some(x => x.type === 'sf_collector_get_task' && x.task_id === 93) &&
+      /\u5df2\u5b8c\u6210/.test(h.document.querySelector('.sf-xchina-status').textContent);
+    h.document.querySelector('[data-action="confirm"]').click();
+    await waitUntil(polled93);
+    check('new active task starts bounded page polling', polled93());
     h.api.destroy();
   }
 
@@ -387,7 +412,9 @@ async function run() {
     let releasePoll;
     h.responses.push({ ok: true, result: { found: true, task: { id: taskId, status: 'downloading', resource_counts: { total: 3, done: 1 } } } });
     h.responses.push(new Promise(resolve => { releasePoll = resolve; }));
-    h.api.init(); await wait(15);
+    h.api.init();
+    // 等到「第二条状态请求已在途中」：固定 sleep 在机器繁忙时等不到，是这套测例偶发红的根源
+    await waitUntil(() => sendCount(h, 'sf_collector_get_task') >= 2);
     return { h, releasePoll };
   }
 
@@ -402,8 +429,8 @@ async function run() {
       /\u6b63\u5728\u542f\u52a8 Collector \u5e76\u9884\u89c8/.test(h.document.querySelector('.sf-xchina-status').textContent));
     h.responses.push({ ok: true, result: { id: 101, status: 'success', progress: 100, resource_counts: { total: 3, done: 3 } } });
     releasePreview({ ok: true, result: { collector: 'xchina_gallery', group: 'A', media: ['image', 'video'], photos: 1, videos: 0, sampled: false } });
-    await wait(80);
-    check('polling safely resumes after preview completes', h.sent.filter(x => x.type === 'sf_collector_get_task').length === 2);
+    await waitUntil(() => sendCount(h, 'sf_collector_get_task') >= 2);
+    check('polling safely resumes after preview completes', sendCount(h, 'sf_collector_get_task') === 2);
     h.api.destroy();
   }
 
@@ -419,8 +446,9 @@ async function run() {
     check('in-flight poll cannot overwrite an explicit login operation', h.document.querySelector('.sf-xchina-primary').disabled &&
       /\u6b63\u5728\u542f\u52a8 Collector \u767b\u5f55\u7a97\u53e3/.test(h.document.querySelector('.sf-xchina-status').textContent));
     h.responses.push({ ok: true, result: { id: 102, status: 'success', progress: 100, resource_counts: { total: 3, done: 3 } } });
-    releaseLogin({ ok: true, result: { started: true } }); await wait(80);
-    check('polling safely resumes after login launch completes', h.sent.filter(x => x.type === 'sf_collector_get_task').length === 2);
+    releaseLogin({ ok: true, result: { started: true } });
+    await waitUntil(() => sendCount(h, 'sf_collector_get_task') >= 2);
+    check('polling safely resumes after login launch completes', sendCount(h, 'sf_collector_get_task') === 2);
     h.api.destroy();
   }
 
@@ -436,8 +464,9 @@ async function run() {
     check('in-flight poll cannot overwrite an explicit open-task operation', h.document.querySelector('.sf-xchina-primary').disabled &&
       /\u6b63\u5728\u6253\u5f00 Collector \u4efb\u52a1/.test(h.document.querySelector('.sf-xchina-status').textContent));
     h.responses.push({ ok: true, result: { id: 103, status: 'success', progress: 100, resource_counts: { total: 3, done: 3 } } });
-    releaseOpen({ ok: true, result: { opened: true } }); await wait(80);
-    check('polling safely resumes after open-task completes', h.sent.filter(x => x.type === 'sf_collector_get_task').length === 2);
+    releaseOpen({ ok: true, result: { opened: true } });
+    await waitUntil(() => sendCount(h, 'sf_collector_get_task') >= 2);
+    check('polling safely resumes after open-task completes', sendCount(h, 'sf_collector_get_task') === 2);
     h.api.destroy();
   }
 
@@ -451,7 +480,8 @@ async function run() {
     check('in-flight poll cannot overwrite a newer create operation', h.document.querySelector('.sf-xchina-primary').disabled &&
       /\u6b63\u5728\u521b\u5efa Collector \u4efb\u52a1/.test(h.document.querySelector('.sf-xchina-status').textContent));
     h.responses.push({ ok: true, result: { id: 105, status: 'success', progress: 100, resource_counts: { total: 1, done: 1 } } });
-    releaseCreate({ ok: true, result: { task_id: 105, status: 'pending', disposition: 'created', content_key: 'xchina_gallery:6664761937f5a' } }); await wait(80);
+    releaseCreate({ ok: true, result: { task_id: 105, status: 'pending', disposition: 'created', content_key: 'xchina_gallery:6664761937f5a' } });
+    await waitUntil(() => h.sent.some(x => x.type === 'sf_collector_get_task' && x.task_id === 105));
     check('newly created task replaces stale polling safely', h.sent.some(x => x.type === 'sf_collector_get_task' && x.task_id === 105));
     h.api.destroy();
   }
