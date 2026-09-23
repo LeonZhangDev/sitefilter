@@ -17,7 +17,7 @@ SiteFilter adds XChina detail-page download controls and delegates all collectio
 - Product requirements: [001 - XChina Collector integration](../requirements/001-xchina-collector-integration.md)
 - Approved design: [2026-09-21 XChina Collector integration design](../aegis/specs/2026-09-21-xchina-collector-integration-design.md)
 - Architecture decision: [Native Host proxy and Collector identity ownership](../decisions/2026-09-22-native-host-proxy-and-collector-identity-ownership.md)
-- The implementation and code-quality gates are complete in the two `codex/xchina-collector-integration` feature worktrees. It has not been merged into either saved-project checkout and has not been published.
+- The implementation and code-quality gates are complete, and the work is merged into `main` in **both** repositories and pushed to the public remotes (`LeonZhangDev/sitefilter`, `LeonZhangDev/universal-web-collector`) as of 2026-09-23. The one item still open is the collector-side data-retention gate tracked in [progress.md](../progress.md); no release has been cut for these notes yet, so nothing here should be described as a released version.
 - The extension owns the page controls, preview/confirmation flow, status restoration, deep links, and at-most-once terminal notifications. The Native Host owns only validated transport and lifecycle startup. Collector owns URL normalization, duplicate identity, extraction, downloads, persistence, and output integrity.
 - Live acceptance used branded Chrome and Edge with the fixed extension ID, a per-user Native Host registration, Ubuntu under WSL 2, and Collector port 8000. Evidence and task identifiers are recorded in the Aegis evidence log; downloaded media and browser profiles remain ignored local data.
 

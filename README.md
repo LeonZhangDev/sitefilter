@@ -893,6 +893,7 @@ site-filter/
 ├── _test_rulecheck.js 规则体检/影响面预演共用匹配口径（rulecheck.js）专项测试：matchEntity 单测 + matchRule 一致性交叉验证（需 jsdom，可删）
 ├── _test_magnet_bridge.js 磁力本机桥（magnet-native.js）专项：端口复用/超时分类/迟到响应丢弃/降级（node 直接跑，可删）
 ├── _test_native_host.py  本机桥 host.py 安全边界：magnet 校验 / 协议动作白名单 / client 路径与扩展名白名单（纯标准库，可删）
+├── _test_docs.js     文档一致性守卫：README 的 manifest version / schemaVersion / 测试套数声明必须等于真实值；已被事实推翻的旧说法不许回来；002/003/004 文首必须有实施状态小节（node 直接跑，可删）
 ├── docs/             需求 / 设计 / 验收 / 决策文档（入口见 docs/README.md）
 └── README.md         本文档
 ```
@@ -930,7 +931,7 @@ manifest 版本一致**，再出包并附到 GitHub Release 上。版本号请�
 
 ```bash
 npm install            # 装 jsdom
-python ci.py           # 一把跑完：语法检查 + 22 套测试 + 打包校验
+python ci.py           # 一把跑完：语法检查 + 23 套测试 + 打包校验
 
 # 或者单跑某一套
 node _test_daily.js      # 这几个不需要 jsdom
@@ -940,6 +941,7 @@ node _test_expr.js
 node _test_encrypt.js
 node _test_migrate.js
 node _test_assembly.js   # 装配守卫（加载顺序 / 白名单 / 不绕过装载器）
+node _test_docs.js       # 文档一致性守卫（版本 / 套数声明 / 需求文档状态列）
 NODE_PATH=<你的 node_modules 路径> node _smoke.js
 NODE_PATH=<...> node _test_import.js
 NODE_PATH=<...> node _test_options.js
@@ -957,13 +959,15 @@ NODE_PATH=<...> node _test_rulecheck.js
 python _test_native_host.py     # 本机桥 host.py 的安全边界（纯标准库，无需 jsdom）
 ```
 
-当前共 **1141 项断言全部通过，0 失败**（22 套）：
+当前共 **1158 项断言全部通过，0 失败**（23 套）：
 设置页 169 · 主冒烟 111 · 站点模板 108 · 数据迁移 97 · 表达式引擎 83 · 磁力深度 81 ·
 下番号下载 79 · 软屏蔽 55 · 新增功能 41 · 采集器桥 39 · 多站比价 34 · 加密备份 30 ·
 番号补足 28 · 每日推荐 27 · 本机下载器桥(host.py) 25 · 相似推荐 25 · 写回完整性 24 ·
-磁力桥(JS) 24 · 规则条件 20 · 规则体检 17 · 骨架装配 14 · 导入 10。
+磁力桥(JS) 24 · 规则条件 20 · 规则体检 17 · 文档一致性 17 · 骨架装配 14 · 导入 10。
 
-测试套件由 `make_package.py` 自动发现（`_smoke.js` + 全部 `_test_*.js`，外加 `_test_*.py`），
+测试套件由 `make_package.py` 自动发现（`_smoke.js` + 全部 `_test_*.js`，外加 `_test_*.py`）；
+其中 `_test_docs.js` 守的是**文档与代码的一致性**（README 的版本/套数声明、需求文档的状态列），
+防止「代码往前走、文档留在原地」这类静默漂移，
 新增一套测试不用改打包脚本。
 
 ---

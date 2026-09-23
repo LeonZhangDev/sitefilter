@@ -3,6 +3,30 @@
 记录时间：2026-09-22
 提出人：Leon（"还有什么功能和扩展建议吗"）
 性质：**建议稿 —— 未获批准前不写任何代码**
+状态：**已全部收口（2026-09-23）** —— 见下「实施状态」
+
+---
+
+## 实施状态（2026-09-23 补）
+
+本清单**没有未决条目**了。①–⑩ 与第五节逐条去代码里核过，结论如下：
+
+| 条目 | 结论 | 落到哪里 |
+| --- | --- | --- |
+| ① 屏蔽展示三档 | ✅ 已做（即需求 002 的 L1） | `settings.blockDisplay`：`hide` / `placeholder`（默认）/ `soft`，v5→v6 迁移 |
+| ② 多站比价 | ✅ 已做（**诚实版**：开标签 + 本地勾选，**零 fetch**） | `content.js` 的 `S.shopMarks` —— 因此 README「零网络请求」的承诺仍然成立 |
+| ③ 技术债清理 | ✅ 已做 | 文档对账、`rulecheck.js` 抽离、打包白名单门禁（`rulecheck.js` 曾漏配导致出包损坏） |
+| ④ 规则影响面预演 | ✅ 已做 | `rulecheck.js::ruleImpact`，「影响面预演」与「规则体检」共用同一套匹配口径 |
+| ⑤ 快照多份 + 分项回滚 | ✅ 已做（两半都做） | `background.js::rotateAutoBackups`（`backupKeep` 轮换，默认 7 份）+ `options.js::RESTORE_SECTIONS`（10 个分项，各自 replace / merge 语义） |
+| ⑥ 番号站补足 | ✅ 已做（即 002 的 L2，仅 `JavDB580`、默认关） | `site-templates.js` 的 `bf: true` + 去重护栏 |
+| ⑦ 自动跨站找高清 / 磁力 | ✅ 按 ② 的方式降级落地 | 只做比价，不做「自动判定最优源」 |
+| ⑧ BT 客户端 / 下载器集成 | ✅ 已做 | Tier A：`openInClient()` 唤起系统默认处理程序；Tier B：`magnet-native.js` + `native-host/` 指定 exe，失败回退 Tier A |
+| ⑨ 引入构建工具 / 框架 | ⛔ 判定不做 | — |
+| ⑩ 规则包云分享 | ⛔ 判定不做 | — |
+| 五、拆 `content.js` | ✅ 已做 | `magnet-core.js` + `site-templates.js`（content / background / options 三端共用），`content.js` 4866 → 4511 行 |
+
+> 下面「零、先说结论」起的原始讨论与「六、需要 Leon 回应的」里的问题都按原样保留（历史锚定，
+> 不回改）—— 里面的提问现已全部有结论，就是上面这张表。
 
 ---
 
