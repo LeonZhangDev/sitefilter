@@ -7,6 +7,7 @@
 if (typeof importScripts === 'function') {
   importScripts('collector-native.js');
   importScripts('magnet-native.js');
+  importScripts('site-templates.js');
 }
 
 var DATA_KEY = 'sf_data_v1';
@@ -62,16 +63,13 @@ var DEFAULT_SETTINGS = {
   ballLock: false
 };
 
-var DEFAULT_SITES = [
-  { id: 's_javbus', pattern: '*://*.javbus.com/*', enabled: true, selector: '', note: 'JavBus' },
-  { id: 's_xchina', pattern: '*://*.xchina.co/*', enabled: true, selector: '', note: 'xchina' },
-  { id: 's_javdb571', pattern: '*://*.javdb571.com/*', enabled: true, selector: '', note: 'JavDB 镜像' },
-  { id: 's_javdb', pattern: '*://*.javdb.com/*', enabled: true, selector: '', note: 'JavDB' },
-    { id: 's_javdb580', pattern: '*://*.javdb580.com/*', enabled: true, selector: '', note: 'JavDB 镜像580' },
-    { id: 's_pornhub', pattern: '*://*.pornhub.com/*', enabled: true, selector: '', note: 'PornHub' },
-    { id: 's_youporn', pattern: '*://*.youporn.com/*', enabled: true, selector: '', note: 'YouPorn' },
-    { id: 's_xsijishe', pattern: '*://*.xsijishe.net/*', enabled: true, selector: '', note: 'xsijishe（求出处）' }
-];
+/* 默认监管站点：唯一事实来源是 site-templates.js（由上面的 importScripts 载入）。
+   它同时被三份 migrate 的 v5「按 id 补站」使用 —— 三处名单必须逐字一致，
+   否则同一份数据在不同入口会被解读成两种行为。 */
+if (typeof SF_SITES === 'undefined') {
+  throw new Error("SF_SITES 未加载：service worker 必须先 importScripts('site-templates.js')");
+}
+var DEFAULT_SITES = SF_SITES.DEFAULT_SITES;
 
 // 存储区：开启云同步则走 sync，否则 local。两份始终镜像，保证本机读取一致。
 function storeArea(d) { return (d && d.settings && d.settings.sync) ? 'sync' : 'local'; }

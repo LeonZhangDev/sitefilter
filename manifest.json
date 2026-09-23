@@ -45,6 +45,7 @@
       "js": [
         "expr.js",
         "rulecheck.js",
+        "site-templates.js",
         "magnet-core.js",
         "content.js",
         "xchina-download.js"

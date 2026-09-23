@@ -7,6 +7,9 @@
  *
  * 这里把顺序的**单一事实来源**钉死在 manifest.json 的 content_scripts[].js 上，
  * 与 Chrome 实际注入的顺序完全一致。测试只调 contentBundle()。
+ *
+ * backgroundBundle() 是同一件事的 service worker 版本：background.js 靠 importScripts
+ * 载入 site-templates.js / *-native.js，直接 readFileSync 它会在加载期抛「SF_SITES 未加载」。
  */
 'use strict';
 const fs = require('fs');
@@ -35,4 +38,18 @@ function contentBundle() {
   return CONTENT_SCRIPTS.map(readScript).join('\n;\n');
 }
 
-module.exports = { EXT, manifest, CONTENT_SCRIPTS, readScript, script, contentBundle };
+/** background.js 依赖的 importScripts 目标。
+ *  顺序的单一事实来源同样是 background.js 自己 —— 不在这里另抄一份清单。 */
+function backgroundImports() {
+  const out = [];
+  for (const m of readScript('background.js').matchAll(/importScripts\(\s*['"]([^'"]+)['"]\s*\)/g)) out.push(m[1]);
+  return out;
+}
+
+/** 等价于 service worker 的加载结果：importScripts 目标（按序）→ background.js 本身。
+ *  service worker 里 importScripts 把模块灌进同一个全局；测试里拼接执行是同一件事。 */
+function backgroundBundle() {
+  return backgroundImports().map(readScript).concat([readScript('background.js')]).join('\n;\n');
+}
+
+module.exports = { EXT, manifest, CONTENT_SCRIPTS, readScript, script, contentBundle, backgroundImports, backgroundBundle };

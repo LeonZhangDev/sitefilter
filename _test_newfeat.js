@@ -339,7 +339,7 @@ const blockedOf = el => !!el && el.classList.contains('cf-blocked');
         notifications: { create() { }, onClicked: { addListener() { } } },
         contextMenus: { removeAll(cb) { if (cb) cb(); }, create() { }, onClicked: { addListener() { } } },
       };
-      const bgCode = fs.readFileSync(path.join(EXT, 'background.js'), 'utf8');
+      const bgCode = require('./_load.js').backgroundBundle();
       const ctx = { chrome, console, Date, Math, Object, Array, JSON, parseInt, String, Promise, URL, setTimeout };
       vm.createContext(ctx);
       vm.runInContext(bgCode, ctx);

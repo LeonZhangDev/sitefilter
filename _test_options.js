@@ -116,8 +116,10 @@ const check = (name, cond) => { console.log((cond ? 'PASS  ' : 'FAIL  ') + name)
 
 let threw = null;
 try {
-  // 与真实页面一致：先加载共享表达式引擎（options.html 里的 <script src="expr.js">），
-  // jsdom runScripts:'outside-only' 不会自动取外部脚本，这里手动对齐。
+  // 与真实页面一致：按 options.html 的 <script> 顺序先加载共享模块
+  // （site-templates.js / expr.js / rulecheck.js），jsdom runScripts:'outside-only'
+  // 不会自动取外部脚本，这里手动对齐。
+  win.eval(fs.readFileSync(path.join(EXT, 'site-templates.js'), 'utf8'));
   win.eval(fs.readFileSync(path.join(EXT, 'expr.js'), 'utf8'));
   win.eval(fs.readFileSync(path.join(EXT, 'rulecheck.js'), 'utf8'));
   win.eval(js);

@@ -24,9 +24,44 @@
 
 ### 治理
 
-- **`LICENSE`（MIT 草稿）**：公开仓库此前无许可证文件，默认「保留所有权利」。
-  MIT 草稿已落在仓库根目录，但**尚未提交** —— 许可证是绑定决策，等作者确认口径后再随发布一并提交；
-  若倾向其它许可证（Apache-2.0 / GPL / 保留所有权利），替换草稿即可。
+- **`LICENSE`（MIT）已正式提交**：公开仓库此前无许可证文件，默认「保留所有权利」。
+  作者确认口径为 MIT，`LICENSE`（Copyright (c) 2026 Leon Zhang）已随本次提交进入仓库，
+  README 末尾也加了「许可证」一节。
+
+### 重构
+
+- **抽出 `magnet-core.js`：磁力/下载链接的解析层独立成模块**（`content.js` 4866 → 4632 行）。
+  搬走的是「链接串 ⇒ 结构化数据」这一层：L2 全字段解析（`xl=` 优先于外层 DOM 文本）、
+  L3 反混淆（零宽/实体/百分号/base64/裸 hash 五种形态）、体积与画质格式化、同 infohash
+  归并（`mergeMagnet`）与 L4 分层排序。边界有意划在「纯」上：扫 DOM、装配结果集、
+  页面打标记（`probeLinks`）仍留在 `content.js`；模块只依赖 URL 与 `atob`，
+  不碰 `document` / `chrome.storage` / UI 状态，因此可被 Node 直接 `require` 单测。
+  搬迁用脚本按锚点原样切片并逐字节校验 —— 磁力正则里含**字面零宽字符**
+  （2×U+200B / 4×U+FEFF），手抄必丢，而丢了只表现为「某些站解不出来」的静默失效。
+- **抽出 `site-templates.js`：站点表与全部派生只留一份**（`content.js` 4632 → 4511 行）。
+  过去站点信息散在 5 处 —— `content.js` 的 `SITE_TEMPLATES` / `DEFAULT_SITES` /
+  `KNOWN_SELECTORS` / `SELECTOR_TEMPLATES` / `CODE_SITES`，`background.js` 的 `DEFAULT_SITES`，
+  `options.js` 的 `DEFAULT_SITES_OPTIONS` / `TPL_SELECTORS`。加一个站要改 4 个地方，
+  漏一处只表现为「面板能开、卡片一个都识别不出」；更隐蔽的是三份 `migrate` 的 v5
+  「按 id 补站」名单一旦不同，同一份数据会在不同入口被解读成两种行为。
+  现在表 + 全部派生都在 `site-templates.js`，三端各按自己的方式加载同一份：
+  `content.js`（manifest 的 content_scripts）、`background.js`（`importScripts`）、
+  `options.js`（`options.html` 的 `<script>`）。`SCOPE_OF`（维度 → 默认作用范围）
+  也收口到同一份，`content.js` 与 `options.js` 不再各写一遍。
+- **依赖 `location` 的逻辑刻意留在 `content.js`**：`templateForHost()` / `linkKindsFor()` /
+  裸域兜底 / 按 host 缓存若放进 service worker，会拿 worker 自己的 `location` 去匹配页面 ——
+  那是个很难查的错。模块因此保持「纯数据 + 纯派生」，可在 Node 里 `require` 单测。
+- **测试装载层补上 service worker 版本**：`_load.js` 新增 `backgroundBundle()`
+  （= `importScripts` 目标 + `background.js`，即 service worker 真实的加载结果），
+  6 个执行 `background.js` 的测例改走它，不再各自 `readFileSync('background.js')`。
+  三个入口都加了显式失败守卫（少了 `SF_SITES` 直接抛错，不静默降级成「什么都不识别」）。
+- **`_test_sites.js` 第 ⑤ 节换了守的东西**：从「三处副本必须一致」改为「三端只此一份」——
+  源码守卫（三个入口都不得再出现 `id: 's_xxx'` 字面量）+ 派生不变量（`DEFAULT_SITES` /
+  `SELECTOR_TEMPLATES` / `CODE_SITES` / `MIRROR_GROUPS` / `KNOWN_SELECTORS` 必须与表里的字段
+  严格一一对应）。`_test_assembly.js` 同款增加「不得绕过 `backgroundBundle()`」守卫，
+  并补上 `site-templates.js` 的 require 与顺序断言。
+- 门禁：**22 套 / 1141 项断言全绿**（此前 README 记的 21 套 / 1116 一直漏计 `_test_assembly.js`，
+  本次一并校正）。
 
 ### 新增（磁力深度 L3：反混淆）
 

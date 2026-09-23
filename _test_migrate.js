@@ -33,7 +33,7 @@ function load(seed) {
     notifications: { create() { }, onClicked: { addListener() { } } },
     contextMenus: { removeAll(cb) { if (cb) cb(); }, create() { }, onClicked: { addListener() { } } },
   };
-  const code = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
+  const code = require('./_load.js').backgroundBundle();
   const ctx = {
     chrome, console, Date, Math, Object, Array, JSON, parseInt, String, Promise, URL, setTimeout,
   };

@@ -36,6 +36,11 @@ var DEFAULT_SETTINGS = {
   autoSeen: true,        // 打开详情页时自动把该番号标为已看
   auditWarn: true        // 建屏蔽规则前先估算影响面，过宽时先确认
 };
+/* 站点表 / 维度作用范围来自 site-templates.js —— 与页面、service worker 同一份。 */
+if (typeof SF_SITES === 'undefined') {
+  throw new Error("SF_SITES 未加载：options.html 必须先加载 site-templates.js");
+}
+
 var SWITCHES = [
   ['enabled', '启用过滤'], ['sfw', 'SFW 缩略图模糊'], ['onlyFav', '只看收藏（女优/标签等）'],
   ['onlyFavCode', '只看★番号收藏'], ['boss', '老板键'], ['showBall', '显示悬浮球'],
@@ -51,25 +56,14 @@ var SWITCHES = [
   ['probeLinks', '下载链接探测'], ['probeMark', '页面内标记下载链接'], ['probeAnySite', '非监管站点也探测']
 ];
 var TYPE_LABEL = { actress: '女优', tag: '标签', maker: '片商', series: '系列', director: '导演', keyword: '标题词', code: '番号', expr: '表达式' };
-var SCOPE_OF = {
-  actress: 'actress', tag: 'tag', maker: 'maker', series: 'series',
-  director: 'director', keyword: 'title', code: 'title'
-};
+/* 维度 → 默认作用范围：与 content.js 共用同一份（过去两边各写一遍）。 */
+var SCOPE_OF = SF_SITES.SCOPE_OF;
 var MATCH_LABEL = { contains: '包含', exact: '精确', regex: '正则' };
 
-/* 默认监管站点：content.js 的 SITE_TEMPLATES 是唯一事实来源，这里是同一份数据的副本
-   （设置页是独立页面，拿不到 content script 的全局变量）。
-   由 _test_sites.js 断言两边 id / pattern / note 必须一致 —— 别只改一处。 */
-var DEFAULT_SITES_OPTIONS = [
-  { id: 's_javbus', pattern: '*://*.javbus.com/*', enabled: true, selector: '', note: 'JavBus' },
-  { id: 's_xchina', pattern: '*://*.xchina.co/*', enabled: true, selector: '', note: 'xchina' },
-  { id: 's_javdb571', pattern: '*://*.javdb571.com/*', enabled: true, selector: '', note: 'JavDB 镜像' },
-  { id: 's_javdb', pattern: '*://*.javdb.com/*', enabled: true, selector: '', note: 'JavDB' },
-  { id: 's_javdb580', pattern: '*://*.javdb580.com/*', enabled: true, selector: '', note: 'JavDB 镜像580' },
-  { id: 's_pornhub', pattern: '*://*.pornhub.com/*', enabled: true, selector: '', note: 'PornHub' },
-  { id: 's_youporn', pattern: '*://*.youporn.com/*', enabled: true, selector: '', note: 'YouPorn' },
-  { id: 's_xsijishe', pattern: '*://*.xsijishe.net/*', enabled: true, selector: '', note: 'xsijishe（求出处）' }
-];
+/* 默认监管站点：唯一事实来源是 site-templates.js（options.html 的 <script> 先于本文件）。
+   这里曾经是一份手抄副本 —— 漏改的表现是「后台迁移补了新站、设置页却列不出来」。 */
+var DEFAULT_SITES_OPTIONS = SF_SITES.DEFAULT_SITES;
+
 
 var D = {
   schemaVersion: SCHEMA_VERSION,
@@ -1841,19 +1835,8 @@ if (_packSel) {
 })();
 
 /* ---------------- 卡片选择器预置模板 ---------------- */
-/* content.js 的 SITE_TEMPLATES 是唯一事实来源，这里是同一份数据的副本。
-   由 _test_sites.js 断言两边一致 —— 别只改一处。 */
-var TPL_SELECTORS = [
-  { name: 'JavBus', test: 'javbus', sel: '.item' },
-  { name: 'xchina', test: 'xchina', sel: '.item' },
-  { name: 'JavDB', test: 'javdb', sel: '.item' },
-  { name: 'PornHub', test: 'pornhub', sel: 'li.pcVideoListItem' },
-  { name: 'YouPorn', test: 'youporn', sel: 'article.video-box' },
-  { name: 'xsijishe（求出处）', test: 'xsijishe', sel: '#threadlist div[id^="normalthread_"], #threadlist div[id^="stickthread_"]' },
-  { name: 'AVMOO / AVSOX', test: 'avmoo', sel: '.item' },
-  { name: '色花堂 / 高清', test: 'sehuatang', sel: '.card' },
-  { name: 'JavLibrary', test: 'javlibrary', sel: '.item' }
-];
+/* 「套用预置模板」的候选：由 SITE_TEMPLATES 里带 tpl 的项派生（过去是同款手抄副本）。 */
+var TPL_SELECTORS = SF_SITES.SELECTOR_TEMPLATES;
 function renderTemplates() {
   var sel = document.getElementById('tplSel');
   if (!sel) return;

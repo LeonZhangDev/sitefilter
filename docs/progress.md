@@ -8,7 +8,11 @@
 
 ## Verification
 
-- SiteFilter: 21 suites, 1116 assertions, zero failures, plus package validation.
+- SiteFilter: 22 suites, 1141 assertions, zero failures, plus package validation.
+  (2026-09-23 updated: 拆 content.js —— 磁力解析层抽成 `magnet-core.js`，站点表与全部派生抽成
+   `site-templates.js`（content / background / options 三端共用，不再有手抄副本）；
+   `_load.js` 增加 backgroundBundle()，`_test_assembly.js` 装配守卫补上 service worker 侧。
+   门禁 22 套 / 1141 项断言全绿，打包 182 KB。)
   (2026-09-22 updated: 需求 002 三档屏蔽 L1、番号站数量补足 L2、建议 ②④⑤ 已落地；
    磁力深度 L2 全字段解析 + L4 同 infohash 归并/排序已落地，新增 `_test_magnet.js`。)
 - SiteFilter feature work landed on `codex/xchina-collector-integration`; it is **implemented and CI-green

@@ -1,7 +1,7 @@
 /* content script 装配守卫。
  *
  * 为什么要有这一套：content script 已经不是单文件了，它由
- *   expr.js → rulecheck.js → magnet-core.js → content.js → xchina-download.js
+ *   expr.js → rulecheck.js → site-templates.js → magnet-core.js → content.js → xchina-download.js
  * 依次注入到同一个隔离世界。这种「装配」坏掉的方式几乎都是**静默**的：
  *   ① 顺序颠倒：后加载的模块在加载期读不到前一个的命名空间 → ReferenceError；
  *      若是反过来（模块用到 content.js 的全局）则表现为「功能少一半」；
@@ -23,15 +23,15 @@ const loader = require('./_load.js');
 
 /* 共享模块：内容脚本里「供别人使用」的模块，必须排在 content.js 之前。
    顺序不是随便定的 —— Chrome 按数组顺序注入，后一个执行时前一个的全局已就位。 */
-const SHARED = ['expr.js', 'rulecheck.js', 'magnet-core.js'];
+const SHARED = ['expr.js', 'rulecheck.js', 'site-templates.js', 'magnet-core.js'];
 
 const scripts = loader.CONTENT_SCRIPTS;
 check('_load.js 的顺序与 manifest 完全一致', (function () {
   const fromManifest = (manifest.content_scripts || []).reduce((a, cs) => a.concat(cs.js || []), []);
   return JSON.stringify(scripts) === JSON.stringify(fromManifest);
 })());
-check('manifest 声明了 content.js 与 xchina-download.js',
-  scripts.indexOf('content.js') !== -1 && scripts.indexOf('xchina-download.js') !== -1);
+check('manifest 声明了 site-templates.js / content.js 与 xchina-download.js',
+  ['site-templates.js', 'content.js', 'xchina-download.js'].every(s => scripts.indexOf(s) !== -1));
 
 const iContent = scripts.indexOf('content.js');
 SHARED.forEach(s => {
@@ -60,7 +60,8 @@ check('content.js 是最后一个「通用」脚本（后面只允许站点专�
 
 /* 共享模块必须能在 Node 下独立 require —— 这是「真的抽出来了」的实证，
    也是它们能被单测的前提。顺带确认命名空间没写错。 */
-[['expr.js', 'SF_EXPR'], ['rulecheck.js', 'SF_RULECHECK'], ['magnet-core.js', 'SF_MAGNET']].forEach(([f, ns]) => {
+[['expr.js', 'SF_EXPR'], ['rulecheck.js', 'SF_RULECHECK'],
+ ['site-templates.js', 'SF_SITES'], ['magnet-core.js', 'SF_MAGNET']].forEach(([f, ns]) => {
   let ok = false, keys = 0;
   try { const m = require(path.join(EXT, f)); keys = Object.keys(m || {}).length; ok = keys > 0; } catch (e) { ok = false; }
   check(f + ' 可被 Node 独立 require 且导出非空（' + ns + '，' + keys + ' 项）', ok);
@@ -83,6 +84,25 @@ check('content.js 是最后一个「通用」脚本（后面只允许站点专�
   }
   check('没有测例绕过 _load.js 直接执行 content.js 源码', offenders.length === 0);
   if (offenders.length) console.log('        违规：' + offenders.join(', ') + '（应改用 require(\'./_load\').contentBundle()）');
+}
+
+/* 同理守 background.js：它现在依赖 importScripts 进来的 site-templates.js，
+   谁再直接 readFileSync('background.js') 去 vm 里执行，就会在加载期抛「SF_SITES 未加载」。
+   唯一豁免是自带 importScripts 桩的测例 —— 那正是在测真实的加载机制，比拼接更强。 */
+{
+  const files = fs.readdirSync(EXT).filter(f => f === '_smoke.js' || /^_test_.*\.js$/.test(f));
+  const offenders = [];
+  for (const f of files) {
+    const src = fs.readFileSync(path.join(EXT, f), 'utf8');
+    if (/importScripts\s*=/.test(src)) continue;   // 自带桩，合法
+    for (const m of src.matchAll(/(?:const|let|var)\s+(\w+)\s*=\s*fs\.readFileSync\([^)]*'background\.js'[^)]*\)/g)) {
+      const n = m[1];
+      const used = new RegExp('(\\bwin\\.eval\\(|\\bvm\\.runInContext\\(|\\beval\\()\\s*(?:\\w+\\.)?' + n + '\\b').test(src);
+      if (used) offenders.push(f + ':' + n);
+    }
+  }
+  check('没有测例绕过 _load.js 直接执行 background.js 源码', offenders.length === 0);
+  if (offenders.length) console.log('        违规：' + offenders.join(', ') + '（应改用 require(\'./_load\').backgroundBundle()）');
 }
 
 console.log('\n' + (pass ? '全部通过' : '存在失败项'));

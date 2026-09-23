@@ -46,6 +46,7 @@ INCLUDE_FILES = [
     'magnet-native.js',
     'expr.js',
     'rulecheck.js',
+    'site-templates.js',
     'magnet-core.js',
     'content.js',
     'xchina-download.js',
@@ -64,7 +65,7 @@ EXCLUDE_RE = re.compile(r'(^|[\\/])(_|test|tests|dist|\.git|node_modules|.*\.py$
 # 语法检查覆盖的 JS（含测试，测试写坏了也是问题）
 JS_FILES = [
     'manifest.json',   # 单独 json 校验
-    'expr.js', 'rulecheck.js', 'magnet-core.js', 'content.js', 'xchina-download.js', 'background.js', 'collector-native.js', 'magnet-native.js', 'popup.js', 'options.js',
+    'expr.js', 'rulecheck.js', 'magnet-core.js', 'site-templates.js', 'content.js', 'xchina-download.js', 'background.js', 'collector-native.js', 'magnet-native.js', 'popup.js', 'options.js',
 ]
 
 

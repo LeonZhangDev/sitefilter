@@ -633,9 +633,11 @@ title =~ /^(SSIS|STARS)-\d+/ && !(tag ~ 巨乳)
 - 如果某个站点识别不出卡片，在浏览器里审查元素找到卡片的 class（如 `.item`），填进"卡片选择器"即可。留空则使用自动识别算法。
 - 已内置：`javbus.com`、`xchina.co`、`javdb571.com`、`javdb.com`、`javdb580.com`、
   `pornhub.com`、`youporn.com`、`xsijishe.net`。
-- 站点模板（`content.js` 的 `SITE_TEMPLATES`）是**唯一事实来源**：卡片选择器、维度识别规则、
-  多站直达搜索入口都由它派生。新增站点只改这一张表即可；
-  `background.js` / `options.js` 里留存的副本由 `_test_sites.js` 断言保持一致，漏改会在门禁里红。
+- 站点模板（`site-templates.js` 的 `SITE_TEMPLATES`）是**唯一事实来源**：卡片选择器、维度识别规则、
+  多站直达搜索入口都由它派生。新增站点只改这一张表即可 —— 三端各按自己的方式加载同一份：
+  页面 `content.js` 走 manifest 的 content_scripts、`background.js` 走 `importScripts`、
+  设置页 `options.js` 走 `options.html` 的 `<script>`，**不再有需要人工同步的副本**。
+  `_test_sites.js` 断言「派生确实由表算出来」且三个入口都没再抄一份站点字面量。
 
 ### 从站点个人收藏页导入 ⭐
 如果你在 **javbus / javdb580**（及同类站点）上有自己的"个人收藏"，可以**一键把这些收藏搬进插件**，无需手动录入：
@@ -852,6 +854,8 @@ site-filter/
 ├── xchina-download.js XChina 详情页控制条（内容脚本之一；「交给 Collector 下载」的入口）
 ├── expr.js           条件表达式引擎（独立一份，content script 与设置页共用，见上文）
 ├── rulecheck.js      规则匹配单一口径（content script 与设置页共用；规则体检 / 影响面预演都调它，见上文）
+├── site-templates.js 站点与维度规则表（全扩展唯一事实来源：表 + 默认站点/候选选择器/设置页模板/番号直达/镜像组/维度作用范围等全部派生；content / background / options 共用）
+├── magnet-core.js    磁力/下载链接解析层（纯函数：L2 全字段解析、L3 反混淆、体积格式化、同 infohash 归并排序；content script 与其它入口共用）
 ├── collector-native.js  Collector Native Messaging 桥（由 background.js 用 importScripts 加载）
 ├── magnet-native.js   磁力交「指定下载器」的 Native Messaging 桥（同上加载；配套 native-host/）
 ├── native-host/       可选的自定义下载器本机程序：host.py + install.py（一次注册即用，见 native-host/README.md）
@@ -866,7 +870,9 @@ site-filter/
 ├── CHANGELOG.md      版本变更记录（--bump 时自动追加）
 ├── .github/workflows/  CI（push/PR 跑门禁）与 Release（打 tag 自动出包）工作流
 ├── dist/             打包产物（可删）
+├── _load.js          测试用 content script 装载器：顺序取自 manifest 的 content_scripts，并提供 backgroundBundle()（= importScripts 目标 + background.js）；避免每个测例各自硬编码文件名（可删）
 ├── _smoke.js         主冒烟测试：面板/规则/推荐/相似下钻/待看看板/搜索/撤销/悬停/键盘导航/右键菜单/幂等性（需 jsdom，可删）
+├── _test_assembly.js 装配守卫：加载顺序与 manifest 一致 / 共享模块必须排在 content.js 之前 / 打包白名单覆盖每个引用 / 测例不得绕过 _load.js 直接执行源码（node 直接跑，可删）
 ├── _test_daily.js    每日推荐生成逻辑单测（含已看粒度/反馈/维度/权重，node 直接跑，可删）
 ├── _test_similar.js  相似女优推荐引擎单测（IDF 加权 + 分解/共同出演，node 直接跑，可删）
 ├── _test_import.js   从站点收藏页导入功能测试（需 jsdom，可删，不影响使用）
@@ -878,7 +884,7 @@ site-filter/
 ├── _test_encrypt.js  加密备份专项：加密产物形状/明文不泄漏/正确密码往返/错误密码失败/篡改检测/salt 随机性（node 直接跑，可删）
 ├── _test_writeback.js 写回完整性测试：守住"整体写回把别的字段冲掉"这一类 bug（需 jsdom，可删）
 ├── _test_migrate.js  数据迁移与错误日志单测：版本升级/字段补齐/三处版本号一致性守卫（node 直接跑，可删）
-├── _test_sites.js    站点模板守卫：模板自洽/派生正确/三处副本一致/迁移补齐新站 + 三站真实选择器钉死（node 直接跑，可删）
+├── _test_sites.js    站点模板守卫：模板自洽 / 派生不变量（表→默认站点·选择器·番号直达·镜像组·候选选择器 一一对应）/ 三端只此一份（不得再抄字面量）/ 迁移补齐新站 + 三站真实选择器钉死（node 直接跑，可删）
 ├── _test_shopprice.js 多站比价专项（需 jsdom，可删）
 ├── _test_backfill.js 番号站数量补足专项：含「开关关闭 / 不在放行名单时零网络请求」安全门禁 + 翻页失效时零重复卡片（需 jsdom，可删）
 ├── _test_collector_native.js Collector Native Messaging 桥协议测试（需 jsdom，可删）
@@ -924,7 +930,7 @@ manifest 版本一致**，再出包并附到 GitHub Release 上。版本号请�
 
 ```bash
 npm install            # 装 jsdom
-python ci.py           # 一把跑完：语法检查 + 21 套测试 + 打包校验
+python ci.py           # 一把跑完：语法检查 + 22 套测试 + 打包校验
 
 # 或者单跑某一套
 node _test_daily.js      # 这几个不需要 jsdom
@@ -933,6 +939,7 @@ node _test_rulecond.js
 node _test_expr.js
 node _test_encrypt.js
 node _test_migrate.js
+node _test_assembly.js   # 装配守卫（加载顺序 / 白名单 / 不绕过装载器）
 NODE_PATH=<你的 node_modules 路径> node _smoke.js
 NODE_PATH=<...> node _test_import.js
 NODE_PATH=<...> node _test_options.js
@@ -950,13 +957,20 @@ NODE_PATH=<...> node _test_rulecheck.js
 python _test_native_host.py     # 本机桥 host.py 的安全边界（纯标准库，无需 jsdom）
 ```
 
-当前共 **1116 项断言全部通过，0 失败**（21 套）：
-设置页 169 · 主冒烟 111 · 数据迁移 97 · 站点模板 97 · 表达式引擎 83 · 下番号下载 79 ·
-磁力深度 81 · 软屏蔽 55 · 新增功能 41 · 采集器桥 39 · 多站比价 34 · 加密备份 30 ·
-每日推荐 27 · 本机下载器桥(host.py) 25 · 相似推荐 25 · 写回完整性 24 · 磁力桥(JS) 24 ·
-番号补足 28 · 规则条件 20 · 规则体检 17 · 导入 10。
+当前共 **1141 项断言全部通过，0 失败**（22 套）：
+设置页 169 · 主冒烟 111 · 站点模板 108 · 数据迁移 97 · 表达式引擎 83 · 磁力深度 81 ·
+下番号下载 79 · 软屏蔽 55 · 新增功能 41 · 采集器桥 39 · 多站比价 34 · 加密备份 30 ·
+番号补足 28 · 每日推荐 27 · 本机下载器桥(host.py) 25 · 相似推荐 25 · 写回完整性 24 ·
+磁力桥(JS) 24 · 规则条件 20 · 规则体检 17 · 骨架装配 14 · 导入 10。
 
 测试套件由 `make_package.py` 自动发现（`_smoke.js` + 全部 `_test_*.js`，外加 `_test_*.py`），
 新增一套测试不用改打包脚本。
+
+---
+
+## 十一、许可证
+
+MIT License —— 见根目录 [`LICENSE`](LICENSE)（Copyright (c) 2026 Leon Zhang）。
+可自由使用、修改、再分发，需保留版权与许可声明。
 
 

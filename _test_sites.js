@@ -3,20 +3,23 @@
  * 为什么要有这套测试：站点信息曾经散在 5 处（content 的 DEFAULT_SITES / KNOWN_SELECTORS /
  * SELECTOR_TEMPLATES / CODE_SITES，background 的 DEFAULT_SITES，options 的 TPL_SELECTORS），
  * 加一个站要改 4 个地方，漏一处就表现为「面板能开但识别不出卡片」这种静默失效。
- * 现在 content.js 的 SITE_TEMPLATES 是唯一事实来源，其余全是派生或副本 ——
- * 本文件用断言把「派生正确」和「副本没走偏」钉死。
+ * 现在 site-templates.js 是唯一事实来源：表 + 全部派生都在那一个文件里，content /
+ * background / options 三端只接命名空间。本文件钉死两件事 ——「派生确实由表算出来」
+ * 和「三端确实没再抄一份」。
  *
- * 不需要 jsdom：直接从源码里切出声明体在 vm 里求值时即可（content.js 整体是 IIFE，
- * 顶层 var 拿不到，所以走源码切片这条路）。node 直接跑。 */
+ * 不需要 jsdom：直接从 site-templates.js 源码里切出声明体在 vm 里求值即可（该文件整体
+ * 是 IIFE，顶层 var 拿不到，所以走源码切片这条路）。node 直接跑。 */
 'use strict';
 const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
+const loader = require('./_load.js');
 
 let pass = true;
 const check = (name, cond) => { console.log((cond ? 'PASS  ' : 'FAIL  ') + name); if (!cond) pass = false; };
 
 const SRC = {
+  sites: fs.readFileSync(path.join(__dirname, 'site-templates.js'), 'utf8'),
   content: fs.readFileSync(path.join(__dirname, 'content.js'), 'utf8'),
   background: fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8'),
   options: fs.readFileSync(path.join(__dirname, 'options.js'), 'utf8'),
@@ -88,7 +91,7 @@ function evalDecls(file, names) {
 }
 
 /* ============ ① 模板表自身 ============ */
-const C = evalDecls('content', ['SITE_TEMPLATES', 'LINK_KINDS', 'DEFAULT_SITES', 'KNOWN_SELECTORS', 'SELECTOR_TEMPLATES', 'CODE_SITES', 'MIRROR_GROUPS']);
+const C = evalDecls('sites', ['SITE_TEMPLATES', 'LINK_KINDS', 'DEFAULT_SITES', 'KNOWN_SELECTORS', 'SELECTOR_TEMPLATES', 'CODE_SITES', 'MIRROR_GROUPS']);
 const T = C.SITE_TEMPLATES;
 
 check('能切出 SITE_TEMPLATES', Array.isArray(T) && T.length > 0);
@@ -146,24 +149,64 @@ check('tplTest 不含正则残留字符（防匹配失效）',
   withTpl.every(t => !/[()|\\^$?*+[\]{}]/.test(t.tplTest)));
 check('SELECTOR_TEMPLATES 由模板派生', C.SELECTOR_TEMPLATES.length === withTpl.length);
 
-/* ============ ⑤ 三处副本必须一致（这是本套测试最想守住的一条） ============ */
-const B = evalDecls('background', ['DEFAULT_SITES']);
-const O = evalDecls('options', ['DEFAULT_SITES_OPTIONS', 'TPL_SELECTORS']);
+/* ============ ⑤ 只此一份：三端都从 site-templates.js 派生 ============
+ * 这一节过去守的是「三处副本必须一致」。副本已经消失 —— 三端现在共用同一张表，
+ * 所以守的东西换成两件更本质的：
+ *   ① 各入口确实是从 SF_SITES 取（而不是又抄了一份）；
+ *   ② 模块里的派生确实由 SITE_TEMPLATES 算出来（而不是在模块里另写死一张表）。 */
+{
+  check('background.js 走 importScripts 载入 site-templates.js',
+    /importScripts\('site-templates\.js'\)/.test(SRC.background));
+  check('background.js 的 DEFAULT_SITES 来自 SF_SITES',
+    /var DEFAULT_SITES = SF_SITES\.DEFAULT_SITES;/.test(SRC.background));
 
-const key = s => s.id + '|' + s.pattern + '|' + s.note;
-// 顺序不影响语义（站点是集合），按 key 排序后再比
-const sortKeys = arr => arr.map(key).sort().join(',');
-const cKeys = sortKeys(C.DEFAULT_SITES);
-check('background.js 的 DEFAULT_SITES 与 content.js 派生结果一致',
-  sortKeys(B.DEFAULT_SITES) === cKeys);
-check('options.js 的 DEFAULT_SITES_OPTIONS 与 content.js 派生结果一致',
-  sortKeys(O.DEFAULT_SITES_OPTIONS) === cKeys);
+  check('options.html 在 options.js 之前加载 site-templates.js', (function () {
+    const h = fs.readFileSync(path.join(__dirname, 'options.html'), 'utf8');
+    const a = h.indexOf('src="site-templates.js"'), b = h.indexOf('src="options.js"');
+    return a !== -1 && b !== -1 && a < b;
+  })());
+  check('options.js 的 默认站点 / 套用模板 / 维度作用范围 都取自 SF_SITES',
+    /var DEFAULT_SITES_OPTIONS = SF_SITES\.DEFAULT_SITES;/.test(SRC.options) &&
+    /var TPL_SELECTORS = SF_SITES\.SELECTOR_TEMPLATES;/.test(SRC.options) &&
+    /var SCOPE_OF = SF_SITES\.SCOPE_OF;/.test(SRC.options));
+  check('content.js 从 SFS 接出站点表与全部派生（自己不再建表）',
+    /var SITE_TEMPLATES = SFS\.SITE_TEMPLATES, LINK_KINDS = SFS\.LINK_KINDS;/.test(SRC.content) &&
+    /var CODE_SITES = SFS\.CODE_SITES;/.test(SRC.content) &&
+    /var MIRROR_GROUPS = SFS\.MIRROR_GROUPS;/.test(SRC.content) &&
+    /var SCOPE_OF = SFS\.SCOPE_OF;/.test(SRC.content));
 
-const tkey = t => t.name + '|' + t.test + '|' + t.sel;
-check('options.js 的 TPL_SELECTORS 与 content.js 的 SELECTOR_TEMPLATES 一致',
-  O.TPL_SELECTORS.map(tkey).join(',') === C.SELECTOR_TEMPLATES.map(tkey).join(','));
-check('TPL_SELECTORS 含三个新站的模板',
-  ['pornhub', 'youporn', 'xsijishe'].every(k => O.TPL_SELECTORS.some(t => t.test === k)));
+  // 源码守卫：三个入口都不得再出现「站点字面量」（id: 's_xxx' 那一族）
+  const lit = /\{\s*id:\s*'s_[a-z0-9]+'/g;
+  ['options', 'background', 'content'].forEach(k => {
+    check(k + '.js 不再自带站点列表字面量', (SRC[k].match(lit) || []).length === 0);
+  });
+
+  // ② 派生不变量：每一项派生都必须与表里的字段严格对应（不是另写死的）
+  check('DEFAULT_SITES 与「enabled 且有 pattern」的模板集合一一对应',
+    C.DEFAULT_SITES.map(s => s.id).sort().join(',') ===
+    T.filter(t => t.enabled && t.pattern).map(t => t.id).sort().join(','));
+  check('每个默认站点的 pattern / note 都取自模板表',
+    C.DEFAULT_SITES.every(s => {
+      const t = byId(s.id);
+      return !!t && t.pattern === s.pattern && t.name === s.note &&
+        s.enabled === true && s.selector === '';
+    }));
+  check('SELECTOR_TEMPLATES 与「带 tpl 的模板」一一对应（name/tplTest/tpl 三字段同源）',
+    C.SELECTOR_TEMPLATES.length === T.filter(t => t.tpl).length &&
+    C.SELECTOR_TEMPLATES.every(x => T.some(t => t.name === x.name && t.tpl === x.sel && t.tplTest === x.test)));
+  check('CODE_SITES 与「带 sbtn+search 的模板」一一对应',
+    C.CODE_SITES.length === T.filter(t => t.sbtn && t.search).length &&
+    C.CODE_SITES.every(c => T.some(t => t.sbtn === c.n && t.search === c.tpl)));
+  check('MIRROR_GROUPS 是「带 mirror 的模板」按组的计数',
+    Object.keys(C.MIRROR_GROUPS).every(k =>
+      C.MIRROR_GROUPS[k] === T.filter(t => t.mirror === k).length) &&
+    Object.keys(C.MIRROR_GROUPS).length === new Set(T.filter(t => t.mirror).map(t => t.mirror)).size);
+  check('KNOWN_SELECTORS 与「带 sel 的模板」一一对应',
+    C.KNOWN_SELECTORS.length === T.filter(t => t.sel && t.sel.length).length);
+
+  check('TPL_SELECTORS 含三个新站的模板',
+    ['pornhub', 'youporn', 'xsijishe'].every(k => C.SELECTOR_TEMPLATES.some(t => t.test === k)));
+}
 
 /* ============ ⑥ 三处版本号与迁移步（与 _test_migrate 的守卫互补：这里只管 v5 / v6） ============ */
 const vOf = f => { const m = SRC[f].match(/var SCHEMA_VERSION = (\d+);/); return m ? Number(m[1]) : NaN; };
@@ -198,7 +241,7 @@ check('三处 SCHEMA_VERSION 都是 6',
   };
   const ctx = { chrome, console, Date, Math, Object, Array, JSON, parseInt, String, Promise, URL, setTimeout };
   vm.createContext(ctx);
-  vm.runInContext(SRC.background, ctx);
+  vm.runInContext(loader.backgroundBundle(), ctx);
 
   const old5 = [
     { id: 's_javbus', pattern: '*://*.javbus.com/*', enabled: true, selector: '', note: 'JavBus' },

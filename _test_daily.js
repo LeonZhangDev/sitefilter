@@ -72,7 +72,7 @@ function mkChrome() {
   };
 }
 
-const code = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
+const code = require('./_load.js').backgroundBundle();
 const ctx = {
   chrome: mkChrome(), console: console, Date: Date, Math: Math, Object: Object, Array: Array,
   JSON: JSON, parseInt: parseInt, String: String, Promise: Promise, URL: URL, setTimeout: setTimeout
