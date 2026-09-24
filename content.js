@@ -10,7 +10,7 @@
   window.__SITEFILTER_LOADED__ = true;
 
   var DATA_KEY = 'sf_data_v1';
-  var SCHEMA_VERSION = 7;   // 数据结构版本：改结构时 +1，并在 migrate() 里补一步
+  var SCHEMA_VERSION = 8;   // 数据结构版本：改结构时 +1，并在 migrate() 里补一步
   var DEBUG = false;
   function log() { if (DEBUG) console.log.apply(console, ['[SF]'].concat([].slice.call(arguments))); }
 
@@ -248,7 +248,7 @@
   /* hostOf() / panOf() → magnet-core.js */
 
   /* ---------------- 运行时状态 ---------------- */
-  var S = { settings: {}, sites: [], rules: [], seen: {}, favCodes: {}, discovered: {}, groups: [], statsLog: {}, watchlist: {}, cooc: {}, peeks: {}, errLog: [], shopMarks: {} };
+  var S = { settings: {}, sites: [], rules: [], seen: {}, favCodes: {}, discovered: {}, groups: [], statsLog: {}, watchlist: {}, cooc: {}, peeks: {}, errLog: [], shopMarks: {}, codeMarks: {}, dropped: {} };
 
   /* 增量提取缓存：同一张卡片只跑一次 extract()（无限滚动追加卡片时只算新的）
      注意：缓存键是卡片元素，但卡片内容可能被就地更新（懒加载标题 / 状态角标 / 换图），
@@ -555,6 +555,14 @@
           if (r && (!r.hitDays || typeof r.hitDays !== 'object' || Array.isArray(r.hitDays))) r.hitDays = {};
           return r;
         });
+      },
+      // v7 → v8：① 影片级标记 codeMarks（番号 → {r: 1~5 星, note, at}）
+      //          ② 「弃」标记 dropped（番号 → 时间戳）
+      //           与 background.js / options.js 的 step 8 必须逐字一致。
+      //           两者都是**纯新增的空对象**，老数据没有它们也照常工作（读取处都有 || {}）。
+      8: function (x) {
+        x.codeMarks = x.codeMarks || {};
+        x.dropped = x.dropped || {};
       }
     };
     for (var v = from + 1; v <= SCHEMA_VERSION; v++) {
@@ -589,6 +597,8 @@
           S.peeks = d.peeks || {};
           S.errLog = d.errLog || [];
           S.shopMarks = d.shopMarks || {};
+          S.codeMarks = d.codeMarks || {};
+          S.dropped = d.dropped || {};
           resolve();
         });
       } catch (e) { resolve(); }
@@ -598,7 +608,7 @@
   function saveState(patch) {
     return new Promise(function (resolve) {
       cfGet(function (o) {
-        var d = Object.assign({ sites: S.sites, rules: S.rules, seen: S.seen, favCodes: S.favCodes, discovered: S.discovered, groups: S.groups, statsLog: S.statsLog, dailyRecs: S.dailyRecs, recHistory: S.recHistory, recFeedback: S.recFeedback, watchlist: S.watchlist, cooc: S.cooc, similarRecs: S.similarRecs, recFeedbackDaily: S.recFeedbackDaily, peeks: S.peeks, errLog: S.errLog, shopMarks: S.shopMarks, settings: S.settings }, o || {});
+        var d = Object.assign({ sites: S.sites, rules: S.rules, seen: S.seen, favCodes: S.favCodes, discovered: S.discovered, groups: S.groups, statsLog: S.statsLog, dailyRecs: S.dailyRecs, recHistory: S.recHistory, recFeedback: S.recFeedback, watchlist: S.watchlist, cooc: S.cooc, similarRecs: S.similarRecs, recFeedbackDaily: S.recFeedbackDaily, peeks: S.peeks, errLog: S.errLog, shopMarks: S.shopMarks, codeMarks: S.codeMarks, dropped: S.dropped, settings: S.settings }, o || {});
         if (patch) Object.assign(d, patch);
         var payload = {};
         payload[DATA_KEY] = d;
@@ -609,6 +619,91 @@
 
   function saveRules() { return saveState({ rules: S.rules }); }
   function saveSettings() { return saveState({ settings: S.settings }); }
+  function saveMarks() {
+    // 番号级标记（评分/备注 + 弃）一起写：它们都按 cid 键在同一个存储层，
+    // 分开写只会多一次读-改-写往返，也更容易漏掉一边。
+    return saveState({ codeMarks: S.codeMarks || {}, dropped: S.dropped || {} });
+  }
+
+  /* ---------------- 番号级标记：影片评分 / 备注 / 「弃」 ----------------
+   * 与演员级质量分是两回事：那个是「这个人的整体水平」，这个是你对**这一部**的评价。
+   * 它本身不参与卡片显隐（除了「弃」），价值在于把它折算成推荐引擎吃得下的信号。 */
+  function markOf(code) { return (code && S.codeMarks && S.codeMarks[code]) || null; }
+  function isDropped(code) { return !!(code && S.dropped && S.dropped[code]); }
+
+  /* 影片级评分 → 演员级反馈。
+   * 推荐推的是人 / 片商 / 系列，不推番号，所以"你对这部片子的评价"必须**经由参演者**
+   * 传导才有用：谁演了这部、就给谁记一次。映射直接来自 cooc 里已经攒下的
+   * actress ↔ 作品 关系，不额外抓数据、不联网。4~5★ = 正反馈，1~2★ = 负反馈，
+   * 3★ 视为中立不记（免得手滑一下就把推荐带偏）。 */
+  function creditRating(code) {
+    var m = markOf(code);
+    if (!m || !m.r) return;
+    var r = Number(m.r) || 0;
+    if (r === 3) return;
+    var kind = r >= 4 ? 'faved' : 'blocked';
+    var cooc = S.cooc || {};
+    var hit = 0;
+    Object.keys(cooc).forEach(function (name) {
+      var w = cooc[name] && cooc[name].w;
+      if (w && w[code]) { recordFeedback('actress', name, kind); hit++; }
+    });
+    if (hit) {
+      // recordFeedback 只改内存，落盘由调用方负责（与「今日推荐」那条路径口径一致）
+      saveState({ recFeedback: S.recFeedback, recFeedbackDaily: S.recFeedbackDaily });
+      flashBall((r >= 4 ? '★' + r + ' → 推荐加分' : '★' + r + ' → 推荐减分') + '（' + hit + ' 位）');
+    }
+    return hit;
+  }
+
+  function setCodeRating(code, stars) {
+    if (!code) return;
+    S.codeMarks = S.codeMarks || {};
+    var n = Number(stars) || 0;
+    if (n <= 0) {
+      var cur = S.codeMarks[code];
+      if (cur) { delete cur.r; if (!cur.note) delete S.codeMarks[code]; }
+    } else {
+      var m = S.codeMarks[code] || (S.codeMarks[code] = {});
+      m.r = Math.max(1, Math.min(5, n));
+      m.at = Date.now();
+    }
+    saveMarks();
+    creditRating(code);
+    flashBall(n > 0 ? ('已评 ' + n + '★') : '已清除评分');
+    if (ui) setTimeout(renderList, 60);
+  }
+
+  function setCodeNote(code, note) {
+    if (!code) return;
+    S.codeMarks = S.codeMarks || {};
+    var t = String(note == null ? '' : note).trim().slice(0, 200);
+    var m = S.codeMarks[code] || (S.codeMarks[code] = {});
+    if (t) m.note = t; else delete m.note;
+    if (!m.r && !m.note) delete S.codeMarks[code]; else m.at = Date.now();
+    saveMarks();
+    flashBall(t ? '备注已保存' : '备注已清除');
+    if (ui) setTimeout(renderList, 60);
+  }
+
+  function editCodeNote(code) {
+    var m = markOf(code) || {};
+    var v = prompt('给 ' + code + ' 写个备注（留空即清除）：', m.note || '');
+    if (v == null) return;
+    setCodeNote(code, v);
+  }
+
+  /* 「弃」= 这一部不要。与「屏蔽规则」的区别：规则按人/标签批量生效，
+   * 弃是按番号精确到某一张卡。它不进规则库，所以不会污染规则体检的统计。 */
+  function setDropped(code, on) {
+    if (!code) return;
+    S.dropped = S.dropped || {};
+    if (on) S.dropped[code] = Date.now(); else delete S.dropped[code];
+    saveMarks();
+    schedulePass();
+    flashBall(on ? '已标记「弃」' : '已取消「弃」');
+    if (ui) setTimeout(renderList, 60);
+  }
 
   /* ---------------- 撤销（规则 / 分组快照） ---------------- */
   function snapshot(label) {
@@ -1271,6 +1366,7 @@
   function hideSrcOf(reasons) {
     for (var i = 0; i < reasons.length; i++) {
       var a = reasons[i].a;
+      if (a === 'drop') return 'drop';      // 用户明确弃掉的番号（优先级最高）
       if (a === 'block') return 'block';    // 命中屏蔽规则
       if (a === 'filter') return 'filter';  // 「只看收藏 / 只看★番号」筛掉的
     }
@@ -1356,15 +1452,16 @@
   function buildBuckets(groupOn, st) {
     function inGroup(r) { return !r.groupId || groupOn[r.groupId]; }
     function alive(r) { return r && r.enabled && inGroup(r) && !ruleExpired(r); }
-    var fav = [], hl = [], block = [];
+    var fav = [], hl = [], block = [], allow = [];
     S.rules.forEach(function (r) {
       if (!alive(r)) return;
       if (r.action === 'block') block.push(r);
+      else if (r.action === 'allow') allow.push(r);      // 例外：命中即放行（压过所有屏蔽规则）
       else if (r.action === 'favorite') fav.push(r);
       else if (r.action === 'highlight') hl.push(r);
     });
     return {
-      fav: fav, hl: hl, block: block,
+      fav: fav, hl: hl, block: block, allow: allow,
       ordered: st && st.firstMatchWins ? S.rules.filter(alive) : null
     };
   }
@@ -1385,10 +1482,22 @@
       }
       return null;
     }
+    function scanAll(list) {
+      for (var i = 0; i < (list || []).length; i++) {
+        if (matchRule(list[i], ctx)) return list[i];
+      }
+      return null;
+    }
+    /* 例外规则（allow）：**无条件优先**，且刻意不走「首个命中生效」的排序 ——
+     * 语义与 uBlock / EasyList 的 `@@` 一致：例外就是用来推翻屏蔽的，
+     * 不该因为它在列表里排在后面就被「首条命中」抢走。它只取消屏蔽，
+     * 不影响收藏 / 高亮（那两个是别的维度，例外管不着）。 */
+    var allowRule = scanAll(bk.allow);
     var blockRule = scan(bk.block, 'block');
-    if (blockRule) return { firstHit: firstHit, blockRule: blockRule, favRule: null, hlRule: null };
+    if (blockRule && allowRule) blockRule = null;   // 命中例外 → 屏蔽作废
+    if (blockRule) return { firstHit: firstHit, blockRule: blockRule, allowRule: allowRule, favRule: null, hlRule: null };
     return {
-      firstHit: firstHit, blockRule: null,
+      firstHit: firstHit, blockRule: null, allowRule: allowRule,
       favRule: scan(bk.fav, 'favorite'),
       hlRule: scan(bk.hl, 'highlight')
     };
@@ -1469,7 +1578,7 @@
     function inGroup(r) { return !r.groupId || groupOn[r.groupId]; }
 
     var bk = buildBuckets(groupOn, st);
-    var favRules = bk.fav, hlRules = bk.hl, blockRules = bk.block, orderedRules = bk.ordered;
+    var favRules = bk.fav, hlRules = bk.hl, blockRules = bk.block, allowRules = bk.allow, orderedRules = bk.ordered;
 
     navIdx = -1;
     cards.forEach(function (card) {
@@ -1497,9 +1606,9 @@
       } catch (e) { }
 
       // 「首个命中生效」：先算出第一条命中的规则，再决定这张卡走哪个动作
-      var dec = decideCard(ctx, { block: blockRules, fav: favRules, hl: hlRules, ordered: orderedRules });
+      var dec = decideCard(ctx, { block: blockRules, fav: favRules, hl: hlRules, allow: allowRules, ordered: orderedRules });
       var firstHit = dec.firstHit;
-      var blockRule = dec.blockRule, favRule = dec.favRule, hlRule = dec.hlRule;
+      var blockRule = dec.blockRule, favRule = dec.favRule, hlRule = dec.hlRule, allowRule = dec.allowRule;
       var blocked = !!blockRule;
 
       ctx.actressList.forEach(function (n) { foundActress.set(n, (foundActress.get(n) || 0) + 1); });
@@ -1511,15 +1620,31 @@
 
       var reasons = [];
       if (blockRule) hitDelta.set(blockRule.id, (hitDelta.get(blockRule.id) || 0) + 1);
-      if (blocked) {
-        reasons.push({ a: 'block', v: blockRule.value, t: blockRule.type, s: blockRule.scope || 'all' });
-        // 临时放行：点过「仍然查看」的番号在有效期内不再屏蔽
-        var peeked = !!(ctx.cid && S.peeks && S.peeks[ctx.cid] && (Date.now() - S.peeks[ctx.cid] < peekTtl()));
+      // 例外放行（allow）：命中就计一次 —— 否则规则体检会把一条**正在生效**的例外
+      // 判成「从未命中」的死规则。同时写进原因，让诊断页/悬停浮层能回答
+      // 「这张卡为什么没被挡」。
+      if (allowRule) {
+        hitDelta.set(allowRule.id, (hitDelta.get(allowRule.id) || 0) + 1);
+        reasons.push({ a: 'allow', v: allowRule.value, t: allowRule.type, s: allowRule.scope || 'all' });
+      }
+      /* 「弃」：用户对**这个番号**的明确否定（右键标的），优先级高于一切规则 ——
+       * 包括刚算出来的 allow 例外。理由：规则例外是"规则级"的宽泛判断，弃是
+       * "就是这一部不要"的具体决定，冲突时听具体的那个；否则会出现
+       * 「我明明弃了它，怎么又被一条宽泛的例外放回来了」。
+       * 它也不吃「仍然查看」(peek)：那是给屏蔽规则留的后门，弃没有后门，只能右键撤销。 */
+      var dropped = !!(ctx.cid && S.dropped && S.dropped[ctx.cid]);
+      if (dropped) reasons.push({ a: 'drop', v: ctx.cid, t: 'code', s: 'title' });
+
+      if (blocked || dropped) {
+        if (blockRule) reasons.push({ a: 'block', v: blockRule.value, t: blockRule.type, s: blockRule.scope || 'all' });
+        // 临时放行：点过「仍然查看」的番号在有效期内不再屏蔽（只对屏蔽规则生效）
+        var peeked = !dropped && !!(ctx.cid && S.peeks && S.peeks[ctx.cid] && (Date.now() - S.peeks[ctx.cid] < peekTtl()));
         if (peeked) {
           reasons.push({ a: 'peek', v: ctx.cid, t: 'code', s: 'title' });
           card.classList.add('cf-peek');   // 手动放行的卡片：淡绿虚线描边，便于识别
-        } else if (st.previewMode) {
-          // 规则预览：不真正隐藏，只描边提示「这里会被屏蔽」，便于确认有没有误杀
+        } else if (st.previewMode && !dropped) {
+          // 规则预览：不真正隐藏，只描边提示「这里会被屏蔽」，便于确认有没有误杀。
+          // 「弃」不参与预览 —— 预览预览的是**规则**会不会误杀，不是用户的明确标记。
           card.classList.add('cf-preview', 'cf-card');
           try { card.dataset.cfCode = ctx.code || ''; card.dataset.cfA = ctx.actressList.join(' || '); } catch (e) { }
           noteWhy(card, reasons);
@@ -1932,6 +2057,14 @@
     '.cf-dlrow .m{font-size:10px;color:#7a8399;margin-top:2px;}',
     /* 多站比价（建议 ②）：列表徽标 + 浮层 */
     '.cf-shopbadge{font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(124,92,255,.22);color:#c3b0ff;}',
+    /* 影片级评分：面板里的五星行（内联、小号）。与卡片右键菜单里的 .cf-starrow 同名同义，
+       只是那处在页面 DOM（content.css），这处在 shadow DOM（UI_CSS）。 */
+    '.cf-starrow{display:inline-flex;align-items:center;gap:1px;margin-left:5px;vertical-align:middle;}',
+    '.cf-starrow .cf-starmini{background:none;border:0;padding:0 1px;cursor:pointer;font-size:12px;line-height:1;color:#5c6478;}',
+    '.cf-starrow .cf-starmini:hover{color:#ffd970;}',
+    '.cf-starrow .cf-starmini.on{color:#ffc93c;}',
+    '.cf-dropbadge{font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(176,184,204,.2);color:#c8cfe0;}',
+    '.cf-dlrow.cf-dropped{opacity:.62;}',
     '.cf-gosrow{display:flex;gap:5px;flex-wrap:wrap;margin:-2px 0 7px;padding-left:2px;}',
     '.cf-shoppanel{position:fixed;z-index:2147483646;width:280px;background:#141821;border:1px solid rgba(255,255,255,.14);',
     'border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.55);padding:10px;font-size:12px;color:#dfe4ef;}',
@@ -2319,6 +2452,15 @@
       }
       if (t.dataset && t.dataset.color) {
         S.settings.hlColor = t.dataset.color; saveSettings(); syncDots(); return;
+      }
+      // 番号级标记（评分 / 备注 / 弃）：先于 .cf-mini 判定 ——
+      // 星标按钮为了排版没有挂 .cf-mini，别让它掉进下面的通用分支。
+      var markB = t.closest ? t.closest('[data-rate],[data-note],[data-drop]') : null;
+      if (markB) {
+        if (markB.dataset.rate) setCodeRating(markB.dataset.rate, Number(markB.dataset.d) || 0);
+        else if (markB.dataset.note != null) editCodeNote(markB.dataset.note);
+        else if (markB.dataset.drop != null) setDropped(markB.dataset.drop, !isDropped(markB.dataset.drop));
+        return;
       }
       var mini = t.closest ? t.closest('.cf-mini') : null;
       if (mini && mini.dataset.a) {
@@ -3054,11 +3196,24 @@
     var rows = list.slice(0, 200).map(function (c) {
       var it = S.favCodes[c];
       var mk = shopMarkCount(c);
-      return '<div class="cf-dlrow">' +
-        '<span class="k">★</span>' +
+      var cm = markOf(c) || {};
+      var curR = Number(cm.r) || 0;
+      var dropped = isDropped(c);
+      var stars = [1, 2, 3, 4, 5].map(function (n) {
+        return '<button class="cf-starmini' + (n <= curR ? ' on' : '') + '" data-rate="' + escapeHtml(c) +
+          '" data-d="' + n + '" title="给这部打 ' + n + ' 星（会换算成对参演者的推荐信号）">' +
+          (n <= curR ? '★' : '☆') + '</button>';
+      }).join('');
+      return '<div class="cf-dlrow' + (dropped ? ' cf-dropped' : '') + '">' +
+        '<span class="k">' + (dropped ? '⛔' : '★') + '</span>' +
         '<span class="info"><span class="n">' + escapeHtml(c) + (S.seen[c] ? ' <span style="color:#6f7893;font-size:10px">已看</span>' : '') +
-        (mk ? ' <span class="cf-shopbadge" title="你在 ' + mk + ' 个站点做过标记">比价 ' + mk + '</span>' : '') + '</span>' +
-        '<span class="m">' + escapeHtml((it && it.t) || '') + '</span></span>' +
+        (dropped ? ' <span class="cf-dropbadge" title="你把它标记为「弃」">弃</span>' : '') +
+        (mk ? ' <span class="cf-shopbadge" title="你在 ' + mk + ' 个站点做过标记">比价 ' + mk + '</span>' : '') +
+        '<span class="cf-starrow">' + stars + '</span></span>' +
+        '<span class="m">' + escapeHtml((it && it.t) || '') +
+        (cm.note ? '<br>📝 ' + escapeHtml(cm.note) : '') + '</span></span>' +
+        '<button class="cf-mini" data-note="' + escapeHtml(c) + '" title="' + (cm.note ? '改备注' : '写备注') + '">📝</button>' +
+        '<button class="cf-mini" data-drop="' + escapeHtml(c) + '" title="' + (dropped ? '取消「弃」标记，让它重新出现' : '标记为「弃」：这一部不要，页面里会被隐藏') + '">' + (dropped ? '取消弃' : '弃') + '</button>' +
         '<button class="cf-mini" data-shop="' + escapeHtml(c) + '" title="多站比价：一键齐开 + 本地标记">比价</button>' +
         '<button class="cf-mini" data-unfav="' + escapeHtml(c) + '">移除</button>' +
         '</div>' +
@@ -3577,7 +3732,10 @@
   }
 
   function ACTION_LABEL_OF(a) {
-    return a === 'block' ? '屏蔽' : (a === 'favorite' ? '收藏' : (a === 'highlight' ? '高亮' : String(a || '—')));
+    return a === 'block' ? '屏蔽'
+      : (a === 'allow' ? '放行（例外）'
+        : (a === 'drop' ? '弃'
+          : (a === 'favorite' ? '收藏' : (a === 'highlight' ? '高亮' : String(a || '—')))));
   }
 
   /* ---------------- 已看自动记录 ----------------
@@ -4471,8 +4629,8 @@
     (document.body || document.documentElement).appendChild(whyEl);
     return whyEl;
   }
-  var WHY_LABEL = { block: '屏蔽', favorite: '★收藏', highlight: '高亮', filter: '筛选', favcode: '★番号', watch: '⏳待看', peek: '👁临时放行' };
-  var WHY_COLOR = { block: '#ff4d6d', favorite: '#ffc93c', highlight: '#00e5ff', filter: '#9aa3b8', favcode: '#ffc93c', watch: '#ff9f1c', peek: '#7ee2a8' };
+  var WHY_LABEL = { block: '屏蔽', allow: '放行（例外）', drop: '弃', favorite: '★收藏', highlight: '高亮', filter: '筛选', favcode: '★番号', watch: '⏳待看', peek: '👁临时放行' };
+  var WHY_COLOR = { block: '#ff4d6d', allow: '#7ee2a8', drop: '#b0b8cc', favorite: '#ffc93c', highlight: '#00e5ff', filter: '#9aa3b8', favcode: '#ffc93c', watch: '#ff9f1c', peek: '#7ee2a8' };
 
   function showWhy(card) {
     var rs = whyMap.get(card);
@@ -4709,6 +4867,21 @@
     if (code) {
       html += '<button data-cm="watch" data-v="' + escapeHtml(code) + '">加入 ⏳ 待看</button>';
       html += '<button data-cm="copycode" data-v="' + escapeHtml(code) + '">复制番号</button>';
+      // 影片级标记：弃 / 评分 / 备注。三者都按番号记，与规则库互不干扰。
+      var _mk = markOf(code) || {};
+      var _curR = Number(_mk.r) || 0;
+      html += '<div class="sep"></div>';
+      html += '<button data-cm="droptoggle" data-v="' + escapeHtml(code) + '">' +
+        (isDropped(code) ? '取消「弃」标记' : '标记为「弃」（这一部不要）') + '</button>';
+      html += '<div class="cf-starrow" title="给这部打分（1~5 星，会换算成对参演者的推荐信号）">' +
+        [1, 2, 3, 4, 5].map(function (n) {
+          return '<button data-cm="rate" data-v="' + escapeHtml(code) + '" data-d="' + n + '"' +
+            (n <= _curR ? ' class="on"' : '') + '>' + (n <= _curR ? '★' : '☆') + '</button>';
+        }).join('') +
+        (_curR ? '<button data-cm="rate" data-v="' + escapeHtml(code) + '" data-d="0" title="清除评分">✕</button>' : '') +
+        '</div>';
+      html += '<button data-cm="note" data-v="' + escapeHtml(code) + '">' +
+        (_mk.note ? '改备注（' + escapeHtml(_mk.note.slice(0, 12)) + '）' : '写备注…') + '</button>';
     }
     if (title) html += '<button data-cm="copytitle" data-v="' + escapeHtml(title) + '">复制标题</button>';
     if (url) html += '<button data-cm="copyurl" data-v="' + escapeHtml(url) + '">复制链接</button>';
@@ -4757,6 +4930,12 @@
       } else if (cm === 'watch') {
         toggleWatch(v, { title: title, url: url });
         flashBall('⏳ 已加入待看');
+      } else if (cm === 'droptoggle') {
+        setDropped(v, !isDropped(v));
+      } else if (cm === 'rate') {
+        setCodeRating(v, Number(b.dataset.d) || 0);
+      } else if (cm === 'note') {
+        editCodeNote(v);
       } else if (cm === 'copycode' || cm === 'copytitle' || cm === 'copyurl') {
         copyText(v);
         flashBall('已复制');

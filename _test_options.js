@@ -22,6 +22,9 @@ const store = {
       { id: 'r1', type: 'actress', value: '三上悠亚', action: 'block', match: 'contains', scope: 'actress', enabled: true, hits: 5, lastHit: now - 3600e3, createdAt: now - 20 * 864e5 },
       { id: 'r2', type: 'actress', value: '冲突女优', action: 'block', match: 'contains', scope: 'actress', enabled: true, hits: 0, createdAt: now - 10 * 864e5 },
       { id: 'r3', type: 'actress', value: '冲突女优', action: 'favorite', match: 'contains', scope: 'actress', enabled: true, hits: 0, createdAt: now - 10 * 864e5 },
+      // 「放行（例外）」与 block 同值**不是冲突**，是刻意共存（误杀了还能救）。
+      // 放在这里是为了验证「一键修复」不会顺手把用户的逃生门也删掉。
+      { id: 'r5', type: 'actress', value: '冲突女优', action: 'allow', match: 'contains', scope: 'actress', enabled: true, hits: 0, createdAt: now - 10 * 864e5 },
       { id: 'r4', type: 'tag', value: '死标签', action: 'block', match: 'contains', scope: 'tag', enabled: true, hits: 0, createdAt: now - 30 * 864e5 }
     ],
     groups: [{ id: 'g1', name: '临时试试', enabled: false }],
@@ -130,7 +133,7 @@ setTimeout(() => {
   if (threw) { console.log('      错误：', threw && threw.message); process.exit(1); }
 
   const doc = win.document;
-  check('规则表渲染出 4 条规则', doc.querySelectorAll('#ruleTable tbody tr[data-id]').length === 4);
+  check('规则表渲染出 5 条规则', doc.querySelectorAll('#ruleTable tbody tr[data-id]').length === 5);
   check('规则表显示「最近命中」相对时间', doc.querySelector('#ruleTable').textContent.indexOf('小时前') !== -1 || doc.querySelector('#ruleTable').textContent.indexOf('分钟前') !== -1);
 
   check('冲突警告框出现', doc.querySelector('#conflictBox').textContent.indexOf('冲突女优') !== -1);
@@ -286,6 +289,19 @@ setTimeout(() => {
     check('应用规则包后新增了规则', rulesAfterPack > rulesBeforePack);
     const added = store.sf_data_v1.rules.filter(r => r.type === 'tag' && ['高清', '4K', '中文字幕'].indexOf(r.value) !== -1);
     check('规则包导入的规则动作为「高亮」', added.length === 3 && added.every(r => r.action === 'highlight'));
+    // ④ 来源可追溯：导入的规则要记住「来自哪个包、哪一版、什么时候导的」，
+    //    否则以后某个包改坏了，根本说不清自己这条是哪版进来的。
+    check('规则包导入的规则带来源元数据（包 id / 版本 / 时间）',
+      added.length === 3 && added.every(r => r.pack && r.pack.id === 'hd' && r.pack.version && r.pack.at));
+    check('规则表里显示「来自规则包」的来源标注',
+      /📦/.test(doc.querySelector('#ruleTable').textContent));
+    check('手输的老规则不显示来源标注（没来源 ≠ 来源未知）',
+      doc.querySelector('#ruleTable tbody tr[data-id="r1"]').textContent.indexOf('📦') === -1);
+    // ① 例外动作：动作下拉里能选，规则包里也给了示例
+    check('规则动作下拉里有「放行（例外）」',
+      !!doc.querySelector('#ruleTable select[data-f="action"] option[value="allow"]'));
+    check('规则包下拉里含「例外」示例包',
+      !!packSel && packSel.textContent.indexOf('例外') !== -1);
     // 再点一次：应当全部跳过（去重）
     const rulesAfterFirst = (store.sf_data_v1.rules || []).length;
     doc.querySelector('#packApply').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
@@ -431,13 +447,13 @@ setTimeout(() => {
   // 重叠：冲突女优 同时被 block + favorite 两条规则命中 → 必须列出来
   check('预演标出被多条规则同时命中的条目', simTxt.indexOf('重叠命中') !== -1);
   // 番号/表达式类无法用发现库离线演算 → 必须显式说明，不能让用户以为"全部安全"
-  // 夹具里的 7 条规则都落在发现库覆盖的维度内，所以这里改用「只挑屏蔽类 + 断言已算」的反向验证：
+  // 夹具里的 8 条规则都落在发现库覆盖的维度内，所以这里改用「只挑屏蔽类 + 断言已算」的反向验证：
   // 确认预演确实没有把任何可算规则静默丢掉。
-  check('预演把可演算的规则全部列出（7 条）',
-    doc.querySelectorAll('#simBox tbody tr').length === 7);
-  // 预演是只读操作：不能碰规则（本文件此处已累积 7 条规则）
+  check('预演把可演算的规则全部列出（8 条）',
+    doc.querySelectorAll('#simBox tbody tr').length === 8);
+  // 预演是只读操作：不能碰规则（本文件此处已累积 8 条规则）
   check('预演不修改任何规则',
-    store.sf_data_v1.rules.length === 7 && store.sf_data_v1.rules[0].enabled === true);
+    store.sf_data_v1.rules.length === 8 && store.sf_data_v1.rules[0].enabled === true);
 
   // —— 候选规则（自动学习）——
   check('候选规则面板已渲染', !!doc.querySelector('#learnBox'));
@@ -538,10 +554,15 @@ setTimeout(() => {
       // 冲突一键修复
       doc.querySelector('#fixConflicts').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
       setTimeout(() => {
-        const stillConflict = (store.sf_data_v1.rules || []).some(r => r.value === '冲突女优' && r.action !== 'block');
-        check('一键修复后冲突的收藏规则被移除', !stillConflict);
+        // 注意判据要指名 favorite：修复后**允许**残留的是「放行（例外）」——它不该被删。
+        // 早先这里写的是 `r.action !== 'block'`，那只在"除 block 外只剩冲突项"时才成立。
+        const stillFav = (store.sf_data_v1.rules || []).some(r => r.value === '冲突女优' && r.action === 'favorite');
+        check('一键修复后冲突的收藏规则被移除', !stillFav);
         const blockKept = (store.sf_data_v1.rules || []).some(r => r.value === '冲突女优' && r.action === 'block');
         check('一键修复保留了屏蔽规则', blockKept);
+        // 例外不是冲突（它和屏蔽是刻意共存的），一键修复不该把用户的逃生门一起删掉
+        const allowKept = (store.sf_data_v1.rules || []).some(r => r.value === '冲突女优' && r.action === 'allow');
+        check('一键修复不会误删同值的「放行（例外）」规则', allowKept);
         check('存储里仍保留 watchlist（未被设置页写丢）', !!store.sf_data_v1.watchlist && !!store.sf_data_v1.watchlist['ABC-777']);
         check('存储里仍保留 recFeedbackDaily（未被写丢）', !!store.sf_data_v1.recFeedbackDaily);
         // 软屏蔽的放行记录同样不能被设置页写丢（save() 是整体写回）

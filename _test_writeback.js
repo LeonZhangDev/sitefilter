@@ -30,7 +30,10 @@ const bundle = require('./_load').contentBundle();
 const SEED_KEYS = [
   'settings', 'sites', 'rules', 'seen', 'favCodes', 'discovered', 'groups', 'statsLog',
   'dailyRecs', 'recHistory', 'recFeedback', 'recFeedbackDaily', 'watchlist', 'cooc',
-  'similarRecs', 'peeks', 'errLog', 'recSettings', '__sentinel',
+  'similarRecs', 'peeks', 'errLog',
+  // v8 新增的两个番号级标记：必须进这份名单，否则"被写丢"这件事不会被任何断言看见
+  'codeMarks', 'dropped',
+  'recSettings', '__sentinel',
 ];
 
 function seedData() {
@@ -59,6 +62,8 @@ function seedData() {
     similarRecs: { '三上悠亚': { at: 1, parts: ['巨乳'] } },
     peeks: { 'ABC-800': Date.now() },
     errLog: [{ t: 1, w: 'old', m: '历史日志不该被冲掉', s: 'javbus.com' }],
+    codeMarks: { 'ABC-700': { r: 5, note: '早就打过分的', at: 1 } },   // v8：影片级评分/备注
+    dropped: { 'ABC-701': 1 },                                          // v8：「弃」标记
     recSettings: { enabled: true, max: 12, newMax: 6 },   // ← 不在 saveState 默认列表里
     __sentinel: 'keep-me',                                 // ← 任何写回都不该动它
   };
@@ -99,7 +104,7 @@ let pass = true;
 const check = (name, cond) => { console.log((cond ? 'PASS  ' : 'FAIL  ') + name); if (!cond) pass = false; };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// 每次写入后都必须成立：19 个字段一个不少
+// 每次写入后都必须成立：21 个字段一个不少
 function assertIntact(label) {
   const d = store.sf_data_v1 || {};
   const missing = SEED_KEYS.filter(k => !(k in d));
@@ -143,6 +148,10 @@ function assertIntact(label) {
   check('[保留] 已加的待看还在', !!(store.sf_data_v1.watchlist && store.sf_data_v1.watchlist['ABC-900']));
   check('[保留] 相似推荐缓存还在', !!(store.sf_data_v1.similarRecs && store.sf_data_v1.similarRecs['三上悠亚']));
   check('[保留] 放行记录还在', !!(store.sf_data_v1.peeks && store.sf_data_v1.peeks['ABC-800']));
+  check('[保留] 影片评分/备注还在（v8 新字段）',
+    !!(store.sf_data_v1.codeMarks && store.sf_data_v1.codeMarks['ABC-700'] &&
+       store.sf_data_v1.codeMarks['ABC-700'].r === 5));
+  check('[保留] 「弃」标记还在（v8 新字段）', !!(store.sf_data_v1.dropped && store.sf_data_v1.dropped['ABC-701']));
 
   /* 源码守卫：不许再出现「cfGet 回调里二次解包 DATA_KEY」的写法 */
   check('守卫：content.js 里已无 o[DATA_KEY] 二次解包',

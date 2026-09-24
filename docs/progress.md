@@ -25,7 +25,20 @@
 
 ## Verification
 
-- SiteFilter: 24 suites, 1372 assertions, zero failures, plus package validation.
+- SiteFilter: 24 suites, 1404 assertions, zero failures, plus package validation.
+  (2026-09-24 updated: **三线调研 → 只吸收真正缺的 4 条**。产品线分头调研（过滤器线对标
+  EasyList / AdGuard、档案线对标 local-first + Yamtrack / Trakt、管道线对标 *arr）共提出 13 条
+  候选，**逐条去代码里核过之后 9 条其实早已实现**（云同步 / 明文 JSON 导出 / 站点个人页导入 /
+  已看时间戳 / 撤销回退 / 规则分层 / 补足限额 / 质量偏好权重 / 死规则判定）—— 记下来是为了
+  下次别再照清单开工。真正补的 4 条：① 规则动作 **`allow`（放行 / 例外）**，语义同 `@@`，
+  命中即压过所有屏蔽规则、**刻意不参与「首条命中生效」排序**（逃生门排第几位都该生效）、
+  只解屏蔽不阻断收藏高亮、命中**也计入命中数**（否则被规则体检误报成死规则）；② **影片级
+  评分 / 备注** `codeMarks`，打分经 `cooc` 的 女优 ↔ 作品 关系**折算成对参演者的推荐反馈**
+  （4~5★ 正 / 1~2★ 负 / **3★ 中立不记**），纯本地映射；③ **「弃」`dropped`**，番号级否定，
+  **唯一优先级高于 `allow` 的判定**（具体的决定压过宽泛的例外）、**不吃「仍然查看」**、
+  隐藏来源记 `drop`；④ **规则包来源可追溯**（`rule.pack` = 包 id + 版本 + 导入时间，
+  规则列表以 📦 脚注显示；改包内容要抬 `version`）。数据结构 **7 → 8**（两个新字段，纯加法、
+  历史不回填）。四项均纯本地、零网络。)
   (2026-09-24 updated: **新增的 windows 腿第一次跑就抓到一个真 bug，已修** ——
   GitHub 的 `windows-latest` 是 en-US locale ⇒ Python 的 stdout 编码是 **cp1252** ⇒
   `print('门禁')` 直接 `UnicodeEncodeError` 崩在**第一行**，整套测试一条都没跑

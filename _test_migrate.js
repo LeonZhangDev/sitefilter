@@ -51,7 +51,7 @@ function load(seed) {
       rules: [{ id: 'r1', type: 'actress', value: '旧规则', action: 'block', enabled: true }],
       seen: { 'OLD-001': 1700000000000 },
       discovered: { 'actress|老人': { v: '老人', type: 'actress', n: 5, first: 1, last: 2 } },
-      // 故意不提供 schemaVersion / watchlist / cooc / peeks / errLog
+      // 故意不提供 schemaVersion / watchlist / cooc / peeks / errLog / codeMarks / dropped
     },
   });
 
@@ -73,6 +73,11 @@ function load(seed) {
   check('迁移补齐 cooc', !!migrated.cooc && typeof migrated.cooc === 'object');
   check('迁移补齐 peeks', !!migrated.peeks && typeof migrated.peeks === 'object');
   check('迁移补齐 errLog（数组）', Array.isArray(migrated.errLog));
+  // v8 起的两个新字段：番号级标记。老数据里没有 → 补成空对象（纯加法，不回填历史）
+  check('迁移补齐 codeMarks（影片评分 / 备注）',
+    !!migrated.codeMarks && typeof migrated.codeMarks === 'object' && !Array.isArray(migrated.codeMarks));
+  check('迁移补齐 dropped（「弃」标记）',
+    !!migrated.dropped && typeof migrated.dropped === 'object' && !Array.isArray(migrated.dropped));
   check('迁移补齐 statsLog / groups / dailyRecs',
     !!migrated.statsLog && Array.isArray(migrated.groups) && !!migrated.dailyRecs);
   check('迁移保留原有 sites（不被清空/覆盖）', (migrated.sites || []).some(s => s.id === 's1'));

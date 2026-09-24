@@ -1,6 +1,6 @@
 'use strict';
 var DATA_KEY = 'sf_data_v1';
-var SCHEMA_VERSION = 7;   // 与 content.js / background.js 保持一致
+var SCHEMA_VERSION = 8;   // 与 content.js / background.js 保持一致
 
 /* ---------------- 错误日志（与 content/background 共用同一份 errLog） ---------------- */
 var ERR_MAX = 200;
@@ -58,6 +58,13 @@ var SWITCHES = [
   ['probeLinks', '下载链接探测'], ['probeMark', '页面内标记下载链接'], ['probeAnySite', '非监管站点也探测']
 ];
 var TYPE_LABEL = { actress: '女优', tag: '标签', maker: '片商', series: '系列', director: '导演', keyword: '标题词', code: '番号', expr: '表达式' };
+/* 规则动作 → 中文。此前四处各写一遍三元表达式 —— 加一个动作就会漏掉某处
+   （表现是"规则表里显示成英文 block"）。统一走这里。 */
+function actionLabel(a) {
+  return a === 'block' ? '屏蔽'
+    : (a === 'allow' ? '放行（例外）'
+      : (a === 'favorite' ? '收藏' : (a === 'highlight' ? '高亮' : String(a || ''))));
+}
 /* 维度 → 默认作用范围：与 content.js 共用同一份（过去两边各写一遍）。 */
 var SCOPE_OF = SF_SITES.SCOPE_OF;
 var MATCH_LABEL = { contains: '包含', exact: '精确', regex: '正则' };
@@ -72,7 +79,8 @@ var D = {
   settings: {}, sites: [], rules: [], seen: {}, favCodes: {}, discovered: {}, groups: [],
   statsLog: {}, recSettings: {}, recHistory: [], dailyRecs: {}, recFeedback: {},
   watchlist: {}, cooc: {}, similarRecs: {}, recFeedbackDaily: {}, peeks: {}, errLog: [],
-  learned: {}, dismissedLearn: {}, profiles: [], activeProfile: '', expiredLog: []
+  learned: {}, dismissedLearn: {}, profiles: [], activeProfile: '', expiredLog: [],
+  codeMarks: {}, dropped: {}
 };
 
 /* ---------------- 数据迁移 ----------------
@@ -149,6 +157,12 @@ function migrate(d) {
         if (r && (!r.hitDays || typeof r.hitDays !== 'object' || Array.isArray(r.hitDays))) r.hitDays = {};
         return r;
       });
+    },
+    // v7 → v8：① 影片级标记 codeMarks（番号 → {r: 1~5 星, note, at}）② 「弃」标记 dropped。
+    // 必须与 content.js / background.js 的 step 8 逐字一致。
+    8: function (x) {
+      x.codeMarks = x.codeMarks || {};
+      x.dropped = x.dropped || {};
     }
   };
   for (var v = from + 1; v <= SCHEMA_VERSION; v++) {
@@ -212,6 +226,8 @@ function get() {
       D.recFeedbackDaily = d.recFeedbackDaily || {};
       D.peeks = d.peeks || {};
       D.shopMarks = d.shopMarks || {};
+      D.codeMarks = d.codeMarks || {};
+      D.dropped = d.dropped || {};
       D.errLog = d.errLog || [];
       D.learned = d.learned || {};
       D.dismissedLearn = d.dismissedLearn || {};
@@ -300,10 +316,16 @@ function renderRules() {
       (aliases.length ? '<br><span class="alias">' + esc(aliases.join(' / ')) + '</span>' : '') +
       ((r.sites && r.sites.length) ? '<br><span class="alias">限定站点：' + esc(r.sites.join(', ')) + '</span>' : '') +
       (groupName(r.groupId) ? '<br><span class="alias">分组：' + esc(groupName(r.groupId)) + '</span>' : '') +
+      (r.pack && r.pack.name
+        ? '<br><span class="alias" title="来自规则包「' + esc(r.pack.name) + '」v' + esc(r.pack.version || '1.0') +
+          '，导入于 ' + esc(r.pack.at ? new Date(r.pack.at).toLocaleString('zh-CN') : '未知时间') +
+          '（改包内容时会抬版本号）">📦 ' + esc(r.pack.name) + ' v' + esc(r.pack.version || '1.0') + '</span>'
+        : '') +
       (condChips ? '<br>' + condChips : '') +
       '</td>' +
       '<td><select data-f="action">' +
-      opt('block', '屏蔽', r.action) + opt('favorite', '收藏', r.action) + opt('highlight', '高亮', r.action) +
+      opt('block', '屏蔽', r.action) + opt('allow', '放行（例外）', r.action) +
+      opt('favorite', '收藏', r.action) + opt('highlight', '高亮', r.action) +
       '</select></td>' +
       '<td><select data-f="match">' +
       opt('contains', '包含', r.match) + opt('exact', '精确', r.match) + opt('regex', '正则', r.match) +
@@ -1495,7 +1517,7 @@ function renderDashboard() {
     var html = '<table><thead><tr><th>名称</th><th style="width:70px">类型</th><th style="width:60px">动作</th><th style="width:120px">命中</th><th style="width:90px">最近命中</th></tr></thead><tbody>';
     top.forEach(function (r) {
       var w = Math.round((r.hits / maxH) * 100);
-      var act = r.action === 'block' ? '屏蔽' : (r.action === 'favorite' ? '收藏' : '高亮');
+      var act = actionLabel(r.action);
       html += '<tr><td><span class="val">' + esc(r.value) + '</span></td>' +
         '<td><span class="chip type">' + esc(TYPE_LABEL[r.type] || r.type) + '</span></td>' +
         '<td><span class="chip ' + r.action + '">' + act + '</span></td>' +
@@ -1616,7 +1638,7 @@ function renderDeadRules() {
   dead.slice(0, 40).forEach(function (r) {
     html += '<tr><td><span class="val">' + esc(r.value) + '</span></td>' +
       '<td><span class="chip type">' + esc(TYPE_LABEL[r.type] || r.type) + '</span></td>' +
-      '<td><span class="chip ' + r.action + '">' + (r.action === 'block' ? '屏蔽' : r.action === 'favorite' ? '收藏' : '高亮') + '</span></td></tr>';
+      '<td><span class="chip ' + r.action + '">' + actionLabel(r.action) + '</span></td></tr>';
   });
   html += '</tbody></table><div class="grid" style="margin-top:8px"><button class="danger" id="delDead">删除这些死规则</button></div>';
   box.innerHTML = html;
@@ -1768,8 +1790,13 @@ function renderConflicts() {
   var fx = document.getElementById('fixConflicts');
   if (fx) fx.addEventListener('click', function () {
     pushUndo();
+    /* 这里刻意用**白名单**（只删 favorite / highlight）而不是"非 block 全删"。
+     * 补集写法在只有三种动作时看着一样，但本轮加了第四种 `allow`（放行例外）——
+     * 它与 block 同值是**有意共存**的（否则误杀了没法救），补集写法会**静默删掉用户的逃生门**。
+     * 加新动作时也不会再悄悄把新动作卷进来。 */
+    var CONFLICT_ACTIONS = { favorite: 1, highlight: 1 };
     D.rules = D.rules.filter(function (r) {
-      if (r.action === 'block') return true;
+      if (!CONFLICT_ACTIONS[r.action]) return true;
       var k = r.type + '|' + String(r.value).toLowerCase();
       return !cs.some(function (c) { return (c.type + '|' + String(c.value).toLowerCase()) === k; });
     });
@@ -1777,10 +1804,14 @@ function renderConflicts() {
   });
 }
 
-/* ---------------- 规则包模板（一键导入成套规则） ---------------- */
+/* ---------------- 规则包模板（一键导入成套规则） ----------------
+ * 每个包带 version：导入时会把「来自哪个包、哪个版本、什么时候导的」写进每条规则
+ * （rule.pack），这样以后某个包改坏了，能一眼看出「我这条是哪版导进去的」。
+ * **改动某个包的规则内容时，把它的 version 往上抬一格** —— 版本号不抬，
+ * 来源信息就是假的。 */
 var RULE_PACKS = [
   {
-    id: 'western', name: '欧美厂牌 → 屏蔽',
+    id: 'western', name: '欧美厂牌 → 屏蔽', version: '1.0',
     tip: '把欧美常见厂牌整体屏蔽掉。',
     rules: [
       { type: 'maker', value: 'Brazzers', action: 'block' },
@@ -1791,7 +1822,15 @@ var RULE_PACKS = [
     ]
   },
   {
-    id: 'vr', name: 'VR / 全景 → 屏蔽',
+    id: 'allow_example', name: '例外：把某片商从屏蔽里摘出来', version: '1.0',
+    tip: '放行（例外）规则的优先级高于屏蔽规则。示例：整体屏蔽了欧美厂牌，但想留 Vixen —— ' +
+      '导入后把它改成你要留的那个名字即可。',
+    rules: [
+      { type: 'maker', value: 'Vixen', action: 'allow' }
+    ]
+  },
+  {
+    id: 'vr', name: 'VR / 全景 → 屏蔽', version: '1.0',
     tip: '屏蔽 VR、全景、サンプル（样片）类内容。',
     rules: [
       { type: 'tag', value: 'VR', action: 'block' },
@@ -1801,7 +1840,7 @@ var RULE_PACKS = [
     ]
   },
   {
-    id: 'hd', name: '高清 / 4K → 高亮',
+    id: 'hd', name: '高清 / 4K → 高亮', version: '1.0',
     tip: '把高清、4K、中文字幕的卡片高亮并置顶。',
     rules: [
       { type: 'tag', value: '高清', action: 'highlight' },
@@ -1810,35 +1849,35 @@ var RULE_PACKS = [
     ]
   },
   {
-    id: 'hiscore', name: '高评分（≥4.5）→ 高亮',
+    id: 'hiscore', name: '高评分（≥4.5）→ 高亮', version: '1.0',
     tip: '只看条件不看关键词：评分 ≥4.5 的卡片自动高亮。',
     rules: [
       { type: 'keyword', value: '', action: 'highlight', ratingMin: 4.5 }
     ]
   },
   {
-    id: 'recent', name: '近两年新作 → 高亮',
+    id: 'recent', name: '近两年新作 → 高亮', version: '1.0',
     tip: '发行日期在近两年内的卡片自动高亮。',
     rules: [
       { type: 'keyword', value: '', action: 'highlight', dateFrom: (new Date(Date.now() - 2 * 365 * 864e5)).toISOString().slice(0, 10) }
     ]
   },
   {
-    id: 'expr_hi', name: '【表达式】高分新片 → 高亮',
+    id: 'expr_hi', name: '【表达式】高分新片 → 高亮', version: '1.0',
     tip: '用一句话表达「评分 ≥4 且 2023 年后发行」。导入后可在规则库点 ✎ 改里面的数字。',
     rules: [
       { type: 'expr', value: '高分新片', action: 'highlight', expr: 'rating >= 4 && date >= 2023-01-01' }
     ]
   },
   {
-    id: 'expr_prefix', name: '【表达式】按番号前缀屏蔽（正则）',
+    id: 'expr_prefix', name: '【表达式】按番号前缀屏蔽（正则）', version: '1.0',
     tip: '用正则按番号前缀批量屏蔽，示例是 ABC- 开头；把正则里的 ABC 换成你要的前缀即可。',
     rules: [
       { type: 'expr', value: '番号前缀 ABC-', action: 'block', expr: 'code =~ /^ABC-\\d+/' }
     ]
   },
   {
-    id: 'expr_mix', name: '【表达式】标签组合 + 排除片商 → 收藏',
+    id: 'expr_mix', name: '【表达式】标签组合 + 排除片商 → 收藏', version: '1.0',
     tip: '示例：同时命中两个标签、且不是某个片商时才收藏。括号与 ! 的用法一看就懂。',
     rules: [
       { type: 'expr', value: '高清+中文字幕', action: 'favorite', expr: 'tag ~ 高清 && tag ~ 中文字幕 && !(maker ~ Moodyz)' }
@@ -1879,7 +1918,9 @@ if (_packSel) {
         color: D.settings.hlColor, sites: [], enabled: true, hits: 0, hitDays: {}, createdAt: Date.now(),
         ratingMin: t.ratingMin == null ? '' : t.ratingMin,
         dateFrom: t.dateFrom || '', dateTo: t.dateTo || '',
-        expr: t.expr || ''
+        expr: t.expr || '',
+        // 来源可追溯：这条规则是人手输的、还是哪个包的哪一版导进来的
+        pack: { id: pack.id, name: pack.name, version: pack.version || '1.0', at: Date.now() }
       });
       added++;
     });
@@ -2947,7 +2988,7 @@ function renderLearn() {
     '<th style="width:80px">覆盖率</th><th style="width:80px">精确率</th><th style="width:60px">得分</th>' +
     '<th>证据</th><th style="width:130px">操作</th></tr></thead><tbody>';
   items.forEach(function (it) {
-    var act = it.action === 'block' ? '屏蔽' : it.action === 'favorite' ? '收藏' : '高亮';
+    var act = actionLabel(it.action);
     html += '<tr>' +
       '<td><span class="chip ' + esc(it.action) + '">' + act + '</span> <span class="val">' + esc(it.value) + '</span></td>' +
       '<td><span class="chip type">' + esc({ tag: '标签', maker: '片商', series: '系列', director: '导演' }[it.dim] || it.dim) + '</span></td>' +
@@ -3295,7 +3336,7 @@ function renderMonthly() {
     top.forEach(function (x) {
       var r = x.r;
       html += '<tr><td><span class="val">' + esc(r.value || '（纯表达式）') + '</span></td>' +
-        '<td><span class="chip ' + esc(r.action) + '">' + (r.action === 'block' ? '屏蔽' : r.action === 'favorite' ? '收藏' : '高亮') + '</span></td>' +
+        '<td><span class="chip ' + esc(r.action) + '">' + actionLabel(r.action) + '</span></td>' +
         '<td>' + (exactMonth ? x.n : (r.hits || 0)) + '</td>' +
         '<td><span class="alias">' + esc(r.lastHit ? relTime(r.lastHit) : '—') + '</span></td></tr>';
     });

@@ -11,7 +11,7 @@ if (typeof importScripts === 'function') {
 }
 
 var DATA_KEY = 'sf_data_v1';
-var SCHEMA_VERSION = 7;   // 与 content.js / options.js 保持一致
+var SCHEMA_VERSION = 8;   // 与 content.js / options.js 保持一致
 
 /* ---------------- 本地错误日志（与 content.js 共用同一份 errLog） ---------------- */
 var ERR_MAX = 200;
@@ -153,6 +153,13 @@ function migrate(d) {
         if (r && (!r.hitDays || typeof r.hitDays !== 'object' || Array.isArray(r.hitDays))) r.hitDays = {};
         return r;
       });
+    },
+    // v7 → v8：① 影片级标记 codeMarks（番号 → {r: 1~5 星, note, at}）
+    //          ② 「弃」标记 dropped（番号 → 时间戳）
+    //           与 content.js / options.js 的 step 8 必须逐字一致。两者都是纯新增空对象。
+    8: function (x) {
+      x.codeMarks = x.codeMarks || {};
+      x.dropped = x.dropped || {};
     }
   };
   for (var v = from + 1; v <= SCHEMA_VERSION; v++) {
@@ -190,6 +197,8 @@ function getData() {
           cooc: src.cooc || {},
           similarRecs: src.similarRecs || {},
           peeks: src.peeks || {},
+          codeMarks: src.codeMarks || {},
+          dropped: src.dropped || {},
           errLog: src.errLog || [],
           learned: src.learned || {},
           dismissedLearn: src.dismissedLearn || {},

@@ -593,6 +593,167 @@ const blockedOf = el => !!el && el.classList.contains('cf-blocked');
     }
   }
 
+  /* ============ ⑦ 规则级例外（allow，等同 EasyList 的 @@）============
+     关键不是"有没有这个分支"，而是：① 它真的能压过屏蔽；② 它只对命中的内容生效，
+     不是"有例外就全放行"；③ 它不阻断收藏/高亮这类正向动作。 */
+  {
+    const mkRule = (id, action, value) => ({
+      id, type: 'actress', value, aliases: [], action,
+      match: 'contains', scope: 'actress', color: '', sites: [], enabled: true,
+      hits: 0, createdAt: Date.now(), expr: ''
+    });
+
+    // 7a. 对照组：只有屏蔽规则 → 卡片被挡（证明下面 7b 不是"规则根本没生效"）
+    {
+      const { win } = build({ rules: [mkRule('x0', 'block', '明星甲')] });
+      await sleep(600);
+      check('[例外] 对照组：只有屏蔽规则时卡片被挡下',
+        blockedOf(cardOf(win.document, 'ABC-001')));
+    }
+    // 7b. 同值屏蔽 + 例外 → 例外压过屏蔽
+    {
+      const { win } = build({ rules: [
+        mkRule('x1', 'block', '明星甲'), mkRule('x2', 'allow', '明星甲')] });
+      await sleep(600);
+      const c = cardOf(win.document, 'ABC-001');
+      check('[例外] 命中例外时屏蔽作废（卡片可见）', !!c && !blockedOf(c));
+      check('[例外] 放行后隐藏来源标记被清掉（不留 block 残影）',
+        !!c && !c.hasAttribute('data-cf-hide-src'));
+    }
+    // 7c. 例外只对命中的内容生效 —— 例外一个不相干的人，明星甲照样被挡
+    {
+      const { win } = build({ rules: [
+        mkRule('x3', 'block', '明星甲'), mkRule('x4', 'allow', '完全不相干的人')] });
+      await sleep(600);
+      check('[例外] 例外不匹配时屏蔽照常生效（例外不是"有就全放行"）',
+        blockedOf(cardOf(win.document, 'ABC-001')));
+    }
+    // 7d. 例外只解除"屏蔽"，不阻断正向动作
+    {
+      const { win } = build({ rules: [
+        mkRule('x5', 'block', '明星甲'),
+        mkRule('x6', 'allow', '明星甲'),
+        mkRule('x7', 'favorite', '明星甲')] });
+      await sleep(600);
+      const c = cardOf(win.document, 'ABC-001');
+      check('[例外] 例外不阻断收藏（卡片可见且被标为收藏）',
+        !!c && !blockedOf(c) && c.classList.contains('cf-fav'));
+    }
+    // 7e. 例外命中也算命中 —— 否则规则体检会把一条正在生效的例外判成"从未命中"。
+    //     hits 由 flushHits 防抖 4s 才落盘，这里必须等够，否则断的是"还没来得及写"。
+    {
+      const { win, store } = build({ rules: [
+        mkRule('x8', 'block', '明星甲'), mkRule('x9', 'allow', '明星甲')] });
+      await sleep(4800);
+      const r9 = (store.sf_data_v1.rules || []).filter(r => r.id === 'x9')[0];
+      check('[例外] 例外规则的命中数被记下来（规则体检不会误判它是死规则）',
+        !!r9 && (r9.hits || 0) > 0);
+    }
+  }
+
+  /* ============ ⑧ 番号级评分 / 备注（影片级，不是演员级）============ */
+  {
+    // 8a. 右键菜单能给具体番号打星，且落到存储层
+    {
+      const { win, store } = build({ rules: [] });
+      await sleep(600);
+      const c = cardOf(win.document, 'ABC-001');
+      c.dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+      await sleep(60);
+      const stars = win.document.querySelectorAll('.cf-cardmenu button[data-cm="rate"]');
+      check('[评分] 右键菜单里给出 5 颗星', stars.length >= 5);
+      clickMenuItem(win, 'rate', b => b.dataset.d === '5');
+      await sleep(200);
+      const m = (store.sf_data_v1.codeMarks || {})['ABC-001'];
+      check('[评分] 打分写进存储（且带时间戳）', !!m && m.r === 5 && !!m.at);
+    }
+    // 8b. 备注与评分各存各的：清掉评分不该连备注一起丢
+    {
+      const { win, store } = build({ rules: [] });
+      await sleep(600);
+      const c = cardOf(win.document, 'ABC-001');
+      const openCtx = () => c.dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+
+      openCtx(); await sleep(60);
+      clickMenuItem(win, 'rate', b => b.dataset.d === '4');
+      await sleep(180);
+
+      win.prompt = () => '这部不错，留着';
+      openCtx(); await sleep(60);
+      clickMenuItem(win, 'note');
+      await sleep(180);
+      check('[备注] 备注写进存储', ((store.sf_data_v1.codeMarks || {})['ABC-001'] || {}).note === '这部不错，留着');
+
+      openCtx(); await sleep(60);
+      clickMenuItem(win, 'rate', b => b.dataset.d === '0');
+      await sleep(180);
+      const after = (store.sf_data_v1.codeMarks || {})['ABC-001'];
+      check('[备注] 清掉评分后备注还在（两件事互不牵连）', !!after && after.r === undefined && after.note === '这部不错，留着');
+    }
+    // 8c. 备注清空且没有评分时，整个键删掉（不留空对象占位）
+    {
+      const { win, store } = build({ rules: [] });
+      await sleep(600);
+      const c = cardOf(win.document, 'ABC-001');
+      const openCtx = () => c.dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+      win.prompt = () => '先写一句';
+      openCtx(); await sleep(60);
+      clickMenuItem(win, 'note');
+      await sleep(180);
+      check('[备注] 先确认写进去了', !!((store.sf_data_v1.codeMarks || {})['ABC-001'] || {}).note);
+
+      win.prompt = () => '   ';   // 只输空白 = 清除
+      openCtx(); await sleep(60);
+      clickMenuItem(win, 'note');
+      await sleep(180);
+      check('[备注] 清空后整个番号标记被移除（不留空对象）',
+        !(store.sf_data_v1.codeMarks || {})['ABC-001']);
+    }
+  }
+
+  /* ============ ⑨「弃」：番号级的明确否定 ============ */
+  {
+    // 9a. 标记弃 → 卡片被隐藏，且隐藏来源是 drop（不是 block）
+    {
+      const { win, store } = build({ rules: [] });
+      await sleep(600);
+      const doc = win.document;
+      const c = cardOf(doc, 'ABC-001');
+      c.dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+      await sleep(60);
+      check('[弃] 右键菜单里有「弃」入口',
+        !!doc.querySelector('.cf-cardmenu button[data-cm="droptoggle"]'));
+      clickMenuItem(win, 'droptoggle');
+      await sleep(600);
+      check('[弃] 标记后卡片被隐藏', blockedOf(cardOf(doc, 'ABC-001')));
+      const dropped = cardOf(doc, 'ABC-001');
+      check('[弃] 隐藏来源记成 drop（诊断页能区分"规则挡的"和"我弃的"）',
+        !!dropped && dropped.getAttribute('data-cf-hide-src') === 'drop');
+      check('[弃] 弃不进规则库（不动规则体检的统计口径）',
+        (store.sf_data_v1.rules || []).length === 0);
+    }
+    // 9b. 再点一次 = 取消弃 → 卡片恢复
+    {
+      const { win, store } = build({ rules: [] });
+      await sleep(600);
+      const doc = win.document;
+      const c = cardOf(doc, 'ABC-001');
+      const openCtx = () => c.dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+      openCtx(); await sleep(60);
+      clickMenuItem(win, 'droptoggle');
+      await sleep(500);
+      check('[弃] 先确认已隐藏', blockedOf(cardOf(doc, 'ABC-001')));
+
+      openCtx(); await sleep(60);
+      clickMenuItem(win, 'droptoggle');
+      await sleep(600);
+      const after = cardOf(doc, 'ABC-001');
+      check('[弃] 再点一次即取消，卡片恢复可见', !!after && !blockedOf(after));
+      check('[弃] 取消后存储里的弃标记也被清掉',
+        !((store.sf_data_v1.dropped || {})['ABC-001']));
+    }
+  }
+
   console.log(pass ? '\n新增功能专项测试全部通过 ✅' : '\n存在失败 ❌');
   process.exit(pass ? 0 : 1);
 })();

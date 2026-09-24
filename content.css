@@ -400,6 +400,16 @@ html.cf-boss .cf-host {
 }
 .cf-cardmenu button:hover { background: rgba(0, 229, 255, 0.14); color: #8beeff; }
 
+/* 影片评分：菜单里的五星行。必须显式覆盖上面那条 button{display:block;width:100%}，
+   否则五颗星会各占一行、菜单被撑得老长。 */
+.cf-cardmenu .cf-starrow { display: flex; align-items: center; gap: 2px; padding: 2px 6px 4px; }
+.cf-cardmenu .cf-starrow button {
+  display: inline-block; width: auto; flex: none; text-align: center;
+  padding: 1px 4px; font-size: 14px; line-height: 1.2; color: #6f7893;
+}
+.cf-cardmenu .cf-starrow button.on { color: #ffc93c; }
+.cf-cardmenu .cf-starrow button:hover { color: #ffd970; background: none; }
+
 /* 番号多站直达链接（面板内） */
 .cf-gosrow { display: flex; gap: 4px; padding: 0 6px 6px 24px; flex-wrap: wrap; }
 .cf-mini.cf-gos { text-decoration: none; }
