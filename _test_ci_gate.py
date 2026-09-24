@@ -268,6 +268,39 @@ if os.path.exists(attr):
           any('.githooks' in l and 'eol=lf' in l
               for l in a.splitlines() if not l.strip().startswith('#')))
 
-print('\n门禁自身（classify_suite / HTML 引用 / git 校验 / 单一入口）测试全部通过 ✅'
+# ================================================================ 5. 输出编码
+# Windows 上 Python 的 stdout 编码**跟 locale 走**。GitHub Actions 的 windows-latest
+# 是 en-US ⇒ cp1252 ⇒ 打印中文直接 UnicodeEncodeError。这不是假想：本轮 CI 就是
+# 这么红的 —— 门禁挂在第一行 print 上，一套测试都没跑，而开发机是中文 Windows
+# （cp936），永远复现不了。本地等价复现：`PYTHONIOENCODING=cp1252 python ci.py`。
+# 所以下面每条都在**真的 cp1252 环境**里跑一次，不是查源码里有没有那几个词。
+def _cp1252(args):
+    return mp.run(args, env={'PYTHONIOENCODING': 'cp1252'})
+
+
+code, out = _cp1252([sys.executable, '-c',
+                     'import sys; sys.path.insert(0, %r); import make_package; '
+                     'print("门禁 ✓ 磁力 → 已看")' % HERE])
+check('cp1252 环境里 import make_package 后打印中文不崩（Windows runner 的坑）',
+      code == 0 and 'UnicodeEncodeError' not in out)
+if code != 0:
+    print('        ' + out.strip().splitlines()[-1][:160])
+
+# 子进程输出走管道时，编码同样跟 locale 走 ⇒ 从调用方（run）统一钉住，
+# 新加的 Python 套件不必各自记得加守卫。
+code, out = mp.run([sys.executable, '-c',
+                    'import os; print(os.environ.get("PYTHONIOENCODING", ""))'])
+check('run() 给子进程钉了 PYTHONIOENCODING=utf-8（否则子套件印中文会崩成"崩溃"）',
+      out.strip() == 'utf-8')
+
+# native-host 套件按设计不依赖仓库里任何模块，UTF-8 守卫是单独的一份 ——
+# 按它真实的运行方式（直接跑文件）验一次。
+code, out = _cp1252([sys.executable, os.path.join(HERE, '_test_native_host.py')])
+check('_test_native_host.py 在 cp1252 环境里也能跑完（自带 UTF-8 守卫）',
+      code == 0 and 'UnicodeEncodeError' not in out)
+if code != 0:
+    print('        ' + out.strip().splitlines()[-1][:160])
+
+print('\n门禁自身（classify_suite / HTML 引用 / git 校验 / 单一入口 / 输出编码）测试全部通过 ✅'
       if _pass else '\n门禁自身测试存在失败 ❌')
 sys.exit(0 if _pass else 1)

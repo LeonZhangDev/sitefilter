@@ -38,6 +38,29 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 DIST = os.path.join(HERE, 'dist')
 
+
+# ---------------------------------------------------------------- 输出编码
+# Windows 上 Python 的 stdout 编码**跟 locale 走**：en-US 的机器是 cp1252，
+# 于是 `print('门禁')` 直接
+#     UnicodeEncodeError: 'charmap' codec can't encode characters ...
+# 崩掉。这不是假设 —— GitHub Actions 的 windows-latest 就是 en-US，门禁在那上面
+# **挂在第一行 print 上**，整套测试一条都没跑（而开发机是中文 Windows / cp936，
+# 永远复现不了；本地复现手法：`PYTHONIOENCODING=cp1252 python ci.py`）。
+#
+# 所以把 stdout/stderr 钉成 UTF-8。重定向到文件时得到干净的 UTF-8，
+# GitHub 的日志页也能正常显示。终端**怎么显示**是终端的事，不该让程序崩。
+# 放在模块顶层执行，是为了「导入即生效」—— ci.py / _test_ci_gate.py 都 import 本模块，
+# 漏掉一处调用就不会再发生。
+def force_utf8_stdio(streams=None):
+    for s in (streams if streams is not None else (sys.stdout, sys.stderr)):
+        try:
+            s.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass          # 被换成非文本流（测试框架捕获等）时跳过，不打断
+
+
+force_utf8_stdio()
+
 # 白名单：扩展运行真正需要的文件 / 目录（测试与脚本一律不进包）
 INCLUDE_FILES = [
     'manifest.json',
@@ -140,8 +163,14 @@ def run(cmd, cwd=None, env=None, quiet=True):
 
     注意：可执行文件找不到（如 CI 容器里没装 git）必须返回 127 而不是抛异常 ——
     否则一个"顺带记一下 git hash"的可选项会把整个打包流程打断。
+
+    子进程一律带上 `PYTHONIOENCODING=utf-8`：输出走管道时，Python 子进程的编码
+    同样跟 locale 走（en-US 的 Windows 上又是 cp1252），套件里印一句中文就会
+    `UnicodeEncodeError` 崩成「崩溃」而不是「断言失败」。这里从**调用方**兜住，
+    新加的 Python 套件不必各自记得加守卫。
     """
     e = dict(os.environ)
+    e['PYTHONIOENCODING'] = 'utf-8'
     if env:
         e.update(env)
     try:

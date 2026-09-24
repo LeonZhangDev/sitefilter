@@ -22,6 +22,16 @@ import tempfile
 
 sys.dont_write_bytecode = True          # 不往 native-host/ 里留 __pycache__
 
+# 本套件按设计**不依赖仓库里任何模块**（纯标准库，可单独复制走），所以这份
+# UTF-8 守卫在这里是**故意重复**的一份（另一份在 make_package.py 顶层）。
+# 少了它，在 en-US 的 Windows 上（GitHub Actions 的 windows-latest 就是）
+# 第一句中文断言就 UnicodeEncodeError 崩掉，而且看起来像"套件坏了"。
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOST_PY = os.path.join(HERE, 'native-host', 'host.py')
 
