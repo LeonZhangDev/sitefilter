@@ -6,6 +6,53 @@
 
 > 下一条变更记在这里，发布时整段改名成版本号。
 
+### 修复：门禁的「假绿」与「本地绿、CI 红」通类
+
+> 本轮**不改产品行为**，只改门禁与 CI 自己 —— 目标是「以后 GitHub 不会红，也不会绿得没道理」。
+> 用户可见行为零变化，`schemaVersion` 与版本号均**未动**。
+
+- **`exit 0` 但零断言，现在判红**。`make_package.py` 里"算不算通过"的判据原来内联在
+  `run_tests()` 的闭包里（`ok = code == 0 and f == 0`），于是**一个套件打印 0 条 PASS、
+  0 条 FAIL、exit 0 会被记成 ✅ 通过 0 失败 0** —— 也就是"一条断言都没跑"和"全都过了"
+  在门禁里长得一模一样。判据抽成模块级纯函数 `classify_suite()`，四种结局分开
+  （`ok` / `fail` / `crash` / `empty`），`empty` 按失败处理，汇总里多一个 `emptySuites`。
+- **新增 `[0/5] git 卫生`**（`ci.py` 的第一步）：「本地绿、CI 红」的通类 —— CI 是一次全新
+  checkout，只有被 git 跟踪的文件存在。判据在 `make_package.py::check_git_tracking()`：
+  门禁读过的每个文件、每个会进包的文件、**每条 workflow** 都必须已在 git 里，
+  且不被 `.gitignore` 命中（本项目有 `*.zip` / `dist/` / `build*/`）。没装 git 时不拦人、
+  只警告放行 —— 拿环境问题拦人只会逼出 `--no-verify`，把守卫本身废掉。
+- **`options.html` / `popup.html` 里的本地引用也进包校验**（`check_manifest()`）。它以前只校验
+  manifest 引用的文件；新加一个 HTML `<script src>` 却忘了加白名单，门禁会全绿而包里缺文件
+  （`rulecheck.js` 漏配那次是同一个病）。
+- **`.github/workflows/ci.yml` 收紧**：`npm install` → **`npm ci`**（严格按锁文件；install 会在
+  CI 里改写锁文件、也可能装出与锁文件不同的版本，于是"本地绿"和"CI 绿"背后其实是两棵依赖树）；
+  加 `permissions: contents: read` 与 `concurrency`（同分支新推送取消还在跑的老 run）；
+  矩阵从 Node `[20, 22]` 收成 **ubuntu + windows 各一条腿、Node 22 / Python 3.12** ——
+  加 windows 是因为本机下载器桥要动注册表与绝对路径，这类问题只有 Windows 才暴露得出来。
+- **`.github/workflows/release.yml` 同样收紧**：它也是"会红的路径"（打 tag 时同样跑门禁），
+  之前还在用 `npm install` 与 Python 3.11，现与 `ci.yml` 对齐。
+
+### 新增：让上面这些不再靠人的记性
+
+- **`_test_ci_gate.py`**（新套件，纯标准库）：喂假输出给 `classify_suite()`，钉死四种结局
+  （全过 / 断言失败 / 崩溃 / **0 断言**），并断言崩溃会回显末尾输出；再用**真实现**跑
+  `check_git_tracking()`，用探针文件验证它确实能抓到「没 `git add`」「被 `.gitignore` 吃掉」
+  「文件不存在」三种漏法。
+- **`_test_assembly.js` 扩守卫**：绝对路径扫描面从「测试文件」扩到**全部 .js / .py + 每条 workflow**
+  （同一个错误写进 `content.js`，本地照样跑，换台机器就坏 —— 只不过坏在用户那里，比坏在 CI 更贵）；
+  workflow 守卫改为逐个读 `.github/workflows/*.yml`（以前只盯 `ci.yml`），
+  通类规则（唯一入口 / 不拼测试命令 / `npm ci`）对每条 workflow 生效。
+- **`.githooks/pre-push`**：push 前跑一遍 `python ci.py`，红了就拦下 —— 这是"推到远端才发现红"
+  最治本的一招（上一轮那 16 次红，全部是本地看不见的问题）。`python ci.py --install-hooks` 安装
+  （设 `core.hooksPath`）；`SKIP_CI_HOOK=1` 或 `git push --no-verify` 可跳过；环境缺 node/python
+  时只警告放行。
+
+### 文档
+
+- README 的 CI 段落对齐到实际配置（此前写着"Node 20 与 22 双版本"，早已不是）。
+- 测试套数 23 → **24**（README 与 `docs/verify/manual-acceptance.md` 两处，由 `_test_docs.js` 守）。
+- README 补上推送前钩子、git 卫生两步的说明；`_test_ci_gate.py` 进文件结构清单。
+
 ## [1.4.0] - 2026-09-24
 
 > **次版本**：四条功能深化（回滚差异预览 / 磁力归属到卡片 / 规则命中时效画像 / iframe

@@ -17,14 +17,26 @@
   on Linux (`readFileSync` ENOENT), 9 declared it without using it (same latent trap). All 12 now use
   `__dirname`. Verified two ways: (a) copying the repo to a fresh `%TEMP%` path, and (b) — the
   decisive one — copying it into WSL (`node v22.23 / python 3.12`, i.e. ≈ `ubuntu-latest`) and
-  running `python3 ci.py` there: 23 suites, 1284 assertions, zero failures, exit 0.
+  running `python3 ci.py` there: every suite green, exit 0. (The assertion count of that run is
+  deliberately not quoted here — it changes with every commit, see Verification below.)
   Consequence: any earlier statement that this repository passed in CI was untrue, and
   "local `python ci.py` is green" does **not** imply the CI job is green.
 - Task 10 browser behavior and output integrity passed, but the data-retention gate remains open: Tasks 1–3 were previously verified and later found missing from the same live database and numbered download root. The deletion source is unknown and awaits user clarification. Task 4 remains the current retained live acceptance task.
 
 ## Verification
 
-- SiteFilter: 23 suites, 1284 assertions, zero failures, plus package validation.
+- SiteFilter: 24 suites, 1344 assertions, zero failures, plus package validation.
+  (2026-09-24 updated: **防假绿 + 不变量加固**，产品行为零变化，版本号与 `schemaVersion` 均未动。
+  ① 「`exit 0` 但零断言」现在判红 —— 判据从 `run_tests()` 的闭包抽成模块级纯函数
+  `classify_suite()`，四种结局（`ok`/`fail`/`crash`/`empty`）分开，`empty` 按失败处理；
+  此前「一条断言都没跑」与「全都过了」在门禁里长得一模一样。② 新增 `[0/5] git 卫生`：
+  门禁读过的文件、会进包的文件、**每条 workflow** 都必须已在 git 里且不被 `.gitignore` 命中 ——
+  这是「本地绿、CI 红」的通类（CI 是全新 checkout）。③ `options.html` / `popup.html` 的本地引用
+  也进包校验。④ `ci.yml` 收紧：`npm ci` 取代 `npm install`、`permissions` 只读、`concurrency`
+  取消旧 run、矩阵收成 ubuntu + windows 各一条腿（Node 22 / Python 3.12）；`release.yml` 同步
+  —— 它是第二条会红的路径。⑤ 新增 `_test_ci_gate.py`（40+ 项）与 `.githooks/pre-push`；
+  `_test_assembly.js` 的绝对路径扫描面扩到全部源码 + 每条 workflow，workflow 守卫改为遍历
+  `.github/workflows/*.yml` 而不是只盯 `ci.yml`。)
   (2026-09-24 updated: `1.4.0` —— 四条功能深化落地：① 分项回滚前先给差异（`sectionDiff()` 纯干跑，
   列出每个区块 `+新增 / ~覆盖 / −丢失`，并把后果写进确认框）；② 磁力归属到卡片
   （纯 CSS 伪元素角标，不插 DOM 以免自激 `MutationObserver`；归属在归并时一并算出，

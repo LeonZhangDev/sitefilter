@@ -967,14 +967,15 @@ site-filter/
 ├── icons/            图标
 ├── make_icons.py     图标生成脚本（可选，可删）
 ├── make_package.py   打包脚本：生成可上架商店的 zip，支持 --ci / --bump（见下）
-├── ci.py             一键门禁：语法检查 + 全部测试 + 打包校验（与 CI 跑的是同一套逻辑）
+├── ci.py             一键门禁，五步：① git 卫生（门禁依赖的文件是否都在 git 里）② 环境 ③ JS 语法检查 ④ 全部测试套件 ⑤ manifest 校验 + 试打包（与 CI 跑的是同一套逻辑）
 ├── package.json      开发依赖（jsdom）与 npm scripts（可删，不进扩展包）
 ├── CHANGELOG.md      版本变更记录（--bump 时自动追加）
-├── .github/workflows/  CI（push/PR 跑门禁）与 Release（打 tag 自动出包）工作流
+├── .githooks/pre-push  推送前跑一遍门禁，红了就拦下（可选装：python ci.py --install-hooks）
+├── .github/workflows/  CI（push/PR 跑门禁，ubuntu + windows 双腿）与 Release（打 tag 自动出包）工作流
 ├── dist/             打包产物（可删）
 ├── _load.js          测试用 content script 装载器：顺序取自 manifest 的 content_scripts，并提供 backgroundBundle()（= importScripts 目标 + background.js）；避免每个测例各自硬编码文件名（可删）
 ├── _smoke.js         主冒烟测试：面板/规则/推荐/相似下钻/待看看板/搜索/撤销/悬停/键盘导航/右键菜单/幂等性（需 jsdom，可删）
-├── _test_assembly.js 装配守卫：加载顺序与 manifest 一致 / 共享模块必须排在 content.js 之前 / 打包白名单覆盖每个引用（含 Tier B 的 native-host/）/ 测例不得绕过 _load.js 直接执行源码（node 直接跑，可删）
+├── _test_assembly.js 装配守卫：加载顺序与 manifest 一致 / 共享模块必须排在 content.js 之前 / 打包白名单覆盖每个引用（含 Tier B 的 native-host/）/ 测例不得绕过 _load.js 直接执行源码 / 源码与 workflow 里不得出现本机绝对路径 / 每条 workflow 都必须走唯一入口 python ci.py（node 直接跑，可删）
 ├── _test_daily.js    每日推荐生成逻辑单测（含已看粒度/反馈/维度/权重，node 直接跑，可删）
 ├── _test_similar.js  相似女优推荐引擎单测（IDF 加权 + 分解/共同出演，node 直接跑，可删）
 ├── _test_import.js   从站点收藏页导入功能测试（需 jsdom，可删，不影响使用）
@@ -996,6 +997,7 @@ site-filter/
 ├── _test_magnet_bridge.js 磁力本机桥（magnet-native.js）专项：端口复用/超时分类/迟到响应丢弃/降级（node 直接跑，可删）
 ├── _test_native_host.py  本机桥 host.py 安全边界：magnet 校验 / 协议动作白名单 / client 路径与扩展名白名单；外加打包范围断言（Tier B 的 native-host/ 必须真的会进包）（纯标准库，可删）
 ├── _test_docs.js     文档一致性守卫：README 的 manifest version / schemaVersion / 测试套数声明必须等于真实值；已被事实推翻的旧说法不许回来；002/003/004 文首必须有实施状态小节（node 直接跑，可删）
+├── _test_ci_gate.py  门禁自身守卫：「exit 0 但零断言」判红（这是假绿本体：一条都没跑和全过了长得一样）/ options.html·popup.html 的本地引用必须进包 / 门禁依赖的文件必须已在 git 里（没 add 或命中 .gitignore 都是「本地绿、CI 红」）（纯标准库，可删）
 ├── docs/             需求 / 设计 / 验收 / 决策文档（入口见 docs/README.md）
 └── README.md         本文档
 ```
@@ -1024,16 +1026,29 @@ manifest 必填字段与图标真实尺寸、检查 `default_locale` 之类会�
 打完包再回头扫一遍 zip 里有没有混进测试文件。`--ci` 时任何测试失败会**直接中止且不产出 zip**，
 避免"测试挂了但包已经发出去了"。
 
-**CI**：`.github/workflows/ci.yml` 在每次 push / PR 跑 `python ci.py`（Node 20 与 22 双版本），
-产物作为 artifact 上传；`.github/workflows/release.yml` 在打 `v*` tag 时**先校验 tag 与
-manifest 版本一致**，再出包并附到 GitHub Release 上。版本号请在本地用
-`python ci.py --release patch` 自增后再打 tag，避免两边对不上。
+**CI**：`.github/workflows/ci.yml` 在每次 push / PR 跑 `python ci.py` —— 与本地**同一个入口**，
+任何一步失败 job 就红，产物作为 artifact 上传。矩阵是 **ubuntu + windows 各一条腿**（Node 22 / Python 3.12，
+与本地开发环境一致）：windows 那条是为产品本身加的 —— 本机下载器桥要动注册表与绝对路径，
+这类问题只有 Windows 才暴露得出来。依赖用 **`npm ci`** 严格按锁文件装（`install` 会在 CI 里改写锁文件、
+也可能装出与锁文件不同的版本，于是"本地绿、CI 绿"背后其实是两棵依赖树）。
+`.github/workflows/release.yml` 在打 `v*` tag 时**先校验 tag 与 manifest 版本一致**，再出包并附到
+GitHub Release 上。版本号请在本地用 `python ci.py --release patch` 自增后再打 tag，避免两边对不上。
+
+**这两条 workflow 本身也有守卫**（`_test_assembly.js` 会逐个读 `.github/workflows/*.yml`）：
+必须走唯一入口 `python ci.py`、不许自己拼测试命令、必须 `npm ci`。
+理由是：CI 最坏的坏法不是变红，而是**少跑** —— 某天有人把命令改成只跑几个套件，于是
+workflow 全绿而覆盖变窄，那就是假绿，而且没人会注意到。
+
+**推送前先本地兜一次**：`.githooks/pre-push` 在 push 前跑一遍 `python ci.py`，
+红了就拦下来（`git push --no-verify` 或 `SKIP_CI_HOOK=1 git push` 可跳过；环境里没 node/python 时
+只警告放行，不拦人）。装钩子：`python ci.py --install-hooks`（设置 `core.hooksPath`）。
+这是"推到远端才发现红"最治本的一招 —— 上一轮 CI 连续 16 次红，全部是本地看不见的问题。
 
 ### 跑测试（可选）
 
 ```bash
-npm install            # 装 jsdom
-python ci.py           # 一把跑完：语法检查 + 23 套测试 + 打包校验
+npm install            # 装 jsdom（本地开发 install 即可；CI 走 npm ci，严格按锁文件）
+python ci.py           # 一把跑完：git 卫生 + 语法检查 + 24 套测试 + 打包校验
 
 # 或者单跑某一套
 node _test_daily.js      # 这几个不需要 jsdom
@@ -1059,17 +1074,18 @@ NODE_PATH=<...> node _test_magnet.js
 NODE_PATH=<...> node _test_magnet_bridge.js
 NODE_PATH=<...> node _test_rulecheck.js
 python _test_native_host.py     # 本机桥 host.py 的安全边界（纯标准库，无需 jsdom）
+python _test_ci_gate.py         # 门禁自身：0 断言判红 / HTML 引用进包 / git 跟踪校验（纯标准库，无需 jsdom）
 ```
 
-当前共 **1284 项断言全部通过，0 失败**（23 套）：
+当前共 **1344 项断言全部通过，0 失败**（24 套）：
 设置页 194 · 磁力深度 139 · 主冒烟 111 · 站点模板 110 · 数据迁移 109 · 表达式引擎 83 ·
-下番号下载 79 · 软屏蔽 55 · 新增功能 41 · 采集器桥 39 · 多站比价 34 · 本机下载器桥(host.py) 31 ·
-加密备份 30 · 骨架装配 29 · 番号补足 28 · 每日推荐 27 · 相似推荐 25 · 写回完整性 24 · 磁力桥(JS) 24 ·
-文档一致性 25 · 规则条件 20 · 规则体检 17 · 导入 10。
+下番号下载 79 · 软屏蔽 55 · 骨架装配 48 · 新增功能 41 · 门禁自身 41 · 采集器桥 39 ·
+多站比价 34 · 本机下载器桥(host.py) 31 · 加密备份 30 · 番号补足 28 · 每日推荐 27 ·
+文档一致性 25 · 相似推荐 25 · 写回完整性 24 · 磁力桥(JS) 24 · 规则条件 20 · 规则体检 17 · 导入 10。
 
 > 上面的数字只是「写这份 README 时的快照」，**权威值以 `python ci.py` 的输出为准** ——
-> 断言数会随每次改动变化，写死在这里的必然过期（`_test_docs.js` 只守**套数**「23」与两处版本号，
-> 它判不了「断言数」，所以不守数字）。
+> 断言数会随每次改动变化，写死在这里的必然过期，而且**没有任何机械手段能核**
+> （`_test_docs.js` 只守**套数**与两处版本号，它判不了「断言数」，所以不守数字）。
 
 测试套件由 `make_package.py` 自动发现（`_smoke.js` + 全部 `_test_*.js`，外加 `_test_*.py`）；
 其中 `_test_docs.js` 守的是**文档与代码的一致性**（README 的版本声明与套数声明、需求文档的状态列、

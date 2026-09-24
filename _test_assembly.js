@@ -21,6 +21,18 @@ const check = (name, cond) => { console.log((cond ? 'PASS  ' : 'FAIL  ') + name)
 const manifest = JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf8'));
 const loader = require('./_load.js');
 
+/* `.github/workflows/` 下的**全部** yml —— 每一条都是「GitHub 会红的路径」，
+   不能只盯 ci.yml（release.yml 就是另一条：tag 触发时它也会跑门禁）。
+   下面两处守卫都要用（绝对路径扫描面 / workflow 自身检查），所以只在这里读一次目录，
+   不各写一遍 —— 目录是唯一的事实来源，新增 workflow 自动纳入。 */
+const WORKFLOW_DIR = '.github/workflows';
+const workflowFiles = () => {
+  const d = path.join(EXT, WORKFLOW_DIR);
+  if (!fs.existsSync(d)) return [];
+  return fs.readdirSync(d).filter(f => /\.ya?ml$/.test(f))
+    .map(f => WORKFLOW_DIR + '/' + f).sort();
+};
+
 /* 共享模块：内容脚本里「供别人使用」的模块，必须排在 content.js 之前。
    顺序不是随便定的 —— Chrome 按数组顺序注入，后一个执行时前一个的全局已就位。 */
 const SHARED = ['expr.js', 'rulecheck.js', 'site-templates.js', 'magnet-core.js'];
@@ -128,7 +140,7 @@ check('content.js 是最后一个「通用」脚本（后面只允许站点专�
     (packager.match(/EXCLUDE_RE\.search\(/g) || []).length === 1);
 }
 
-/* 测试文件不许硬编码本机绝对路径。
+/* 测试文件与源码都不许硬编码本机绝对路径。
  *
  * 这条是补的：12 个测试文件都把仓库路径**写死成开发机的绝对路径**
  * （`const EXT = '<C 盘用户目录>/Desktop/site-filter';` 这种形态，具体串见 git 历史），
@@ -140,37 +152,113 @@ check('content.js 是最后一个「通用」脚本（后面只允许站点专�
  *    ① 只要文件里用到 EXT，它的声明就必须是 __dirname；
  *    ② 不许出现本机用户目录形态的绝对路径（Windows 盘符 + Users，或 macOS /Users/<名字>/）。
  *       只钉这两种形态，是为了不误伤 fixture 里的假路径（如 output_dir: 'D:/Downloads/...'）。
+ *
+ * 扫描面从「测试文件」扩到了**全部 .js / .py + workflow**：同一个错误写进
+ * content.js / options.js，本地照样能跑，换台机器就坏 —— 只不过坏在用户那里，
+ * 比坏在 CI 更贵、更难查。
  */
 {
   const BAD_PATH = /C:[\\/]{1,2}Users[\\/]|\/Users\/[A-Za-z0-9._-]+\//;
-  const all = fs.readdirSync(EXT).filter(f => /^_test_.*\.(js|py)$/.test(f) || f === '_smoke.js');
-  const jsFiles = all.filter(f => /\.js$/.test(f));
+  const scan = fs.readdirSync(EXT).filter(f => /\.(js|py)$/.test(f))
+    .concat(workflowFiles());
+  const jsScan = scan.filter(f => /\.js$/.test(f));
 
   const wrongExt = [], pathHits = [];
-  for (const f of jsFiles) {
+  for (const f of jsScan) {
     const src = fs.readFileSync(path.join(EXT, f), 'utf8');
     if (/\bEXT\b/.test(src) && !/const\s+EXT\s*=\s*__dirname\s*;/.test(src)) wrongExt.push(f);
   }
-  for (const f of all) {
+  for (const f of scan) {
     fs.readFileSync(path.join(EXT, f), 'utf8').split('\n').forEach((l, i) => {
       if (BAD_PATH.test(l)) pathHits.push(f + ':' + (i + 1) + ' ' + l.trim().slice(0, 80));
     });
   }
-  check('用到 EXT 的测试文件都以 __dirname 声明（写死本机路径会让 CI 崩）', wrongExt.length === 0);
+  check('用到 EXT 的文件都以 __dirname 声明（写死本机路径会让 CI 崩）', wrongExt.length === 0);
   if (wrongExt.length) console.log('        违规：' + wrongExt.join(', '));
-  check('测试文件里没有本机用户目录的绝对路径', pathHits.length === 0);
+  check('全部源码 / 脚本 / workflow 里都没有本机用户目录的绝对路径'
+    + '（扫描 ' + scan.length + ' 个文件）', pathHits.length === 0);
   if (pathHits.length) pathHits.forEach(h => console.log('        ' + h));
 }
 
-/* 套件崩溃（0/0 且 exit≠0）必须留下线索。
- * 同上一次踩的坑：崩溃时一行 FAIL 都没有，而 run_tests() 以前只在「失败>0」时收集明细，
- * 于是 CI 日志里只剩「❌ 通过 0 失败 0」—— 结论明明在 stderr 里，被门禁自己吞了。 */
+/* 门禁自身的判据必须**能被断言**，而不是"源码里有这几个词"。
+ *
+ * 上一版：`run_tests()` 里判定"算不算通过"的逻辑藏在内层闭包，守卫只能用正则
+ * 去 make_package.py 里找 CRASH_TAIL_LINES 这样的**字符串** —— 那不是测试，
+ * 是检查源码里有这几个词；改坏逻辑但留下那几个词，守卫照样绿。
+ * 现在判定抽成模块级纯函数 `classify_suite()`，行为断言搬到了 `_test_ci_gate.py`。
+ * 这里只钉住"结构没被改回去"。 */
 {
   const packager = fs.readFileSync(path.join(EXT, 'make_package.py'), 'utf8');
-  check('run_tests() 会区分「崩溃」与「断言失败」',
+  check('套件判定是模块级纯函数 classify_suite（可 import 直接喂假输出断言）',
+    /^def classify_suite\(code, out\):/m.test(packager));
+  check('run_tests() 复用 classify_suite（判据只此一处，不许各写一套）',
+    /classify_suite\(code, out\)/.test(packager));
+  check('「exit 0 但零断言」判为不通过 —— 否则一条都不跑的套件会显示全绿',
+    /verdict = 'empty'/.test(packager) && /p == 0/.test(packager));
+  check('崩溃（exit≠0 且无 FAIL）仍会回显末尾输出',
     /CRASH_TAIL_LINES/.test(packager) && /crashedSuites/.test(packager));
-  check('run_tests() 崩溃时会回显套件末尾输出（而不是只印一行 ❌）',
-    /末尾/.test(packager) && /record\(/.test(packager));
+  check('行为断言住在 _test_ci_gate.py（而不是在这里用正则猜）',
+    fs.existsSync(path.join(EXT, '_test_ci_gate.py')));
+  check('run_tests() 的汇总带 emptySuites（下游能看到"有几个套件是空跑"）',
+    /'emptySuites'/.test(packager));
+}
+
+/* GitHub Actions 的**每一条** workflow 都要守 —— 它们都是"会红的路径"。
+ *
+ * 以前完全没人管：改坏了本地一点感觉都没有，只在远端才现形。最坏的改法
+ * 不是让它变红，而是让它**少跑** —— 比如某天有人"优化"成只跑几个套件、
+ * 或者绕开 ci.py 自己拼命令；于是 CI 全绿而覆盖变窄，那就是假绿。
+ *
+ * **通类规则**（每个 yml 都要满足）：走唯一入口 `python ci.py`、不许出现单个套件名
+ * 或 `node --check`、依赖必须 `npm ci`。
+ * **ci.yml 专属规则**（发布流程不需要）：矩阵含 ubuntu+windows、权限只读、并发取消、push/PR 都跑。
+ *
+ * 只判"可执行内容"：先剥掉 YAML 注释行，否则这条守卫会被自己的说明文字绊倒
+ * （说明里难免要提到那些不许出现的命令 —— 这个坑已经踩过两次，见 _test_docs.js）。 */
+{
+  const files = workflowFiles();
+  check('workflow 守卫的扫描面覆盖全部 yml（CI + 发布，别只盯 ci.yml）',
+    files.length >= 2);
+  if (files.length) console.log('        扫描：' + files.join(', '));
+
+  const body = f => fs.readFileSync(path.join(EXT, f), 'utf8')
+    .split('\n').filter(l => !/^\s*#/.test(l)).join('\n');
+
+  files.forEach(f => {
+    const wf = body(f);
+    const tag = f.replace('.github/workflows/', '');
+    check(tag + ' ▶ 走唯一入口 python ci.py（而不是自己拼一套测试命令）',
+      /python ci\.py/.test(wf));
+    check(tag + ' ▶ 没有绕开入口直接跑测试（不出现单个套件名 / 语法检查命令）',
+      !/_test_/.test(wf) && !/_smoke/.test(wf) && !/node\s+--check/.test(wf));
+    check(tag + ' ▶ 用 npm ci 严格按锁文件装依赖（install 会漂，本地/CI 就是两棵依赖树）',
+      /npm ci\b/.test(wf) && !/npm\s+install/.test(wf));
+  });
+
+  const ci = body('.github/workflows/ci.yml');
+  check('ci.yml ▶ 同时跑 ubuntu 与 windows（本机桥只在 Windows 上才暴露得了问题）',
+    /ubuntu-latest/.test(ci) && /windows-latest/.test(ci));
+  check('ci.yml ▶ 权限收敛为只读', /permissions:\s*\n\s*contents:\s*read/.test(ci));
+  check('ci.yml ▶ 有并发取消（同分支新推送干掉还在跑的老 run）',
+    /cancel-in-progress:\s*true/.test(ci));
+  check('ci.yml ▶ 在 push 与 PR 上都跑', /^on:\s*$/m.test(ci) && /\bpull_request:/.test(ci));
+}
+
+/* 「本地绿、CI 红」的通类：新文件没进 git / 被 .gitignore 吃掉。
+ * 判据在 make_package.py::check_git_tracking()（ci.py 的第一步就调它），
+ * 行为断言在 _test_ci_gate.py 里。这里只钉"它确实是门禁的一步"。 */
+{
+  const ciPy = fs.readFileSync(path.join(EXT, 'ci.py'), 'utf8');
+  const packager = fs.readFileSync(path.join(EXT, 'make_package.py'), 'utf8');
+  check('门禁第一步做 git 卫生（门禁依赖的文件必须都在 git 里）',
+    /check_git_tracking/.test(ciPy) && /^def check_git_tracking\(/m.test(packager));
+  check('git 卫生覆盖「进包文件 + 测试套件 + 门禁自身脚本」三类',
+    /needed\.update\(test_suites\(\)\)/.test(packager)
+    && /needed\.update\(GATE_SELF_FILES\)/.test(packager));
+  check('门禁自身崩了会给独立退出码并打完整调用栈（不让它变成一条沉默的红）',
+    /sys\.exit\(3\)/.test(ciPy) && /traceback\.print_exc\(\)/.test(ciPy));
+  check('pre-push 钩子存在，且能一键安装（python ci.py --install-hooks）',
+    fs.existsSync(path.join(EXT, '.githooks/pre-push')) && /--install-hooks/.test(ciPy));
 }
 
 /* iframe 探测：子 frame 只探测 + 上报，顶层 frame 汇总展示。

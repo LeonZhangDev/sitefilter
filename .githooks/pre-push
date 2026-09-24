@@ -1,0 +1,48 @@
+#!/bin/sh
+# pre-push：推之前先在本地跑一遍门禁。
+#
+# 为什么值得装：CI 能告诉你的，这里能在你按下回车之前告诉你。CI 是一次全新
+# checkout（只有被 git 跟踪的文件存在），本地却还有未跟踪的、以及被 .gitignore
+# 挡掉的文件 —— 两者不一致时，本地全绿、CI 立刻红，而且两边现象完全不同。
+#
+# 安装：python ci.py --install-hooks   （本地配置，不进仓库，换机器后要再跑一次）
+# 跳过：SKIP_CI_HOOK=1 git push
+#
+# 设计上的取舍：**环境缺失不拦截**。找不到 python / node 时只警告放行 ——
+# 拿环境问题拦人，只会让人养成 `git push --no-verify` 的习惯，把这条守卫废掉。
+# 只有「门禁真的红了」（exit 1）才拦。
+
+if [ "$SKIP_CI_HOOK" = "1" ]; then
+  echo "[pre-push] SKIP_CI_HOOK=1，跳出门禁。"
+  exit 0
+fi
+
+root=$(git rev-parse --show-toplevel 2>/dev/null)
+if [ -n "$root" ]; then cd "$root" || exit 0; fi
+
+PY=""
+for c in python3 python py; do
+  if command -v "$c" >/dev/null 2>&1; then PY="$c"; break; fi
+done
+if [ -z "$PY" ]; then
+  echo "[pre-push] ⚠️  找不到 python，跳过门禁（不拦截）。"
+  echo "[pre-push]    装了 python 后重跑：python ci.py --install-hooks"
+  exit 0
+fi
+
+echo "[pre-push] 跑门禁：$PY ci.py"
+"$PY" ci.py
+code=$?
+
+if [ "$code" = "0" ]; then
+  exit 0
+fi
+if [ "$code" = "2" ]; then
+  echo "[pre-push] ⚠️  门禁没能运行（环境缺失，例如找不到 node），跳过拦截。"
+  exit 0
+fi
+
+echo ""
+echo "[pre-push] ❌ 门禁未通过（exit $code）—— 已拦下这次推送。"
+echo "[pre-push]    修好再推；确要跳过：SKIP_CI_HOOK=1 git push"
+exit 1

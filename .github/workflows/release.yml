@@ -5,6 +5,13 @@ name: Release
 #   ② 跑门禁 + 打包
 #   ③ 把 zip 与 build-info.json 作为 Release 附件上传
 # 版本号自增请在本地用 `python ci.py --release patch` 完成后再打 tag。
+#
+# 这是**第二条**会红的路径（第一条是 ci.yml），所以两条的规矩必须一样：
+#   · 唯一入口 `python ci.py`，不许自己拼测试命令；
+#   · `npm ci` 而不是 `npm install` —— 后者在 CI 里会改写锁文件、也可能装出
+#     与锁文件不同的版本，于是"发布包"和"门禁验过的包"来自两棵依赖树。
+#     `_test_assembly.js` 会把 .github/workflows/ 下的每个 yml 都过一遍。
+#   · 本机 node / python 与 ci.yml 对齐（22 / 3.12）：发布流程不该比门禁少验一层。
 
 on:
   push:
@@ -27,10 +34,10 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
-      - name: 安装依赖（jsdom）
-        run: npm install --no-audit --no-fund
+      - name: 安装依赖（jsdom，严格按锁文件）
+        run: npm ci --no-audit --no-fund
 
       - name: 校验 tag 与 manifest 版本一致
         if: startsWith(github.ref, 'refs/tags/')

@@ -82,6 +82,39 @@ JS_FILES = [
     'expr.js', 'rulecheck.js', 'magnet-core.js', 'site-templates.js', 'content.js', 'xchina-download.js', 'background.js', 'collector-native.js', 'magnet-native.js', 'popup.js', 'options.js',
 ]
 
+# 需要做「包内引用」校验的页面：manifest 只声明"有哪些页面"，
+# 页面自己再引用什么它管不着 —— 所以这几页要单独扫一遍（见 check_manifest）。
+HTML_PAGES = ['options.html', 'popup.html']
+HTML_LOCAL_RE = re.compile(
+    r'<(?:script|link|img)\b[^>]*?\b(?:src|href)\s*=\s*["\']([^"\']+)["\']', re.I)
+
+# 门禁自己读、但不属于"进包文件 / 测试套件"那两类的文件。
+# 少一个 CI 就跑不起来，且报出来的错通常与真实原因无关。
+GATE_SELF_FILES = [
+    'ci.py', 'make_package.py', 'package.json', 'package-lock.json',
+    '.githooks/pre-push', '.gitattributes', '_load.js',
+    'README.md', 'CHANGELOG.md',
+    'docs/progress.md', 'docs/verify/manual-acceptance.md',
+]
+# workflow 不写上面那张清单里，而是扫目录 —— 见 workflow_files()。
+
+
+def workflow_files():
+    """`.github/workflows/` 下的每个 yml，都算「门禁依赖的文件」。
+
+    它们不是门禁读来跑的脚本，而是**门禁能在 CI 里生效的载体**：少跟踪一个，
+    那条 workflow 在 GitHub 上根本不存在（静默失效 —— 看着仓库有 CI，其实没有），
+    而本地毫无感觉。反过来，`_test_assembly.js` 会读它们做守卫，CI 里缺一个就崩。
+
+    目录是唯一事实来源：新增 workflow 自动纳入，不用回来改这张清单
+    （清单漏加正是本项目反复发作的病）。
+    """
+    d = os.path.join(HERE, '.github', 'workflows')
+    if not os.path.isdir(d):
+        return []
+    return sorted('.github/workflows/' + f for f in os.listdir(d)
+                  if f.endswith(('.yml', '.yaml')))
+
 
 # ---------------------------------------------------------------- 基础工具
 
@@ -219,6 +252,41 @@ def syntax_check(quiet=False):
 CRASH_TAIL_LINES = 12
 
 
+def classify_suite(code, out):
+    """把一个测试套件的 (退出码, 输出) 归类。**纯函数**，供 _test_ci_gate.py 直接断言。
+
+    四种结局，每一种都必须能从输出里分辨出来 —— 第四种以前会被记成"全过"：
+
+      'ok'     全过
+      'fail'   有断言失败（打印了 FAIL 行）
+      'crash'  崩了：exit≠0 且一行 FAIL 都没有（抛异常 / 找不到文件 / 语法错）
+      'empty'  exit 0，但**一条断言都没打印**（提前 return、被条件整段跳过、收尾丢了）
+
+    'empty' 是这套判据里最阴的一种：它看起来和 'ok' 一模一样（exit 0、零 FAIL），
+    于是被记成「✅ 通过 0 失败 0」—— 也就是说 **测试文件被改坏到一条都不跑，
+    门禁反而全绿**。这和以前 'crash' 被门禁自己吞掉是同一类病：判据本身有盲区。
+
+    为什么必须是纯函数：上一版这段逻辑藏在 run_tests() 的内层闭包里，守卫只能用
+    正则去 make_package.py 里找 CRASH_TAIL_LINES 这样的字符串 —— 那不是测试，
+    是"检查源码里有这几个词"。抽出来才能真喂假输出进去断言分类结果。
+    """
+    p = len(re.findall(r'^PASS', out, re.M))
+    f = len(re.findall(r'^FAIL', out, re.M))
+    if code != 0 and f == 0:
+        verdict = 'crash'
+    elif code != 0 or f > 0:
+        verdict = 'fail'
+    elif p == 0:
+        verdict = 'empty'
+    else:
+        verdict = 'ok'
+    return {'verdict': verdict, 'passed': p, 'failed': f, 'code': code,
+            'ok': verdict == 'ok'}
+
+
+VERDICT_MARK = {'ok': '✅', 'fail': '❌', 'crash': '💥', 'empty': '⚠️'}
+
+
 def run_tests(quiet=False):
     """跑全部测试套件。返回 (ok, 明细字符串列表, 汇总 dict)。"""
     node = find_node()
@@ -229,64 +297,111 @@ def run_tests(quiet=False):
     if not suites:
         return False, ['没找到任何测试套件（_smoke.js / _test_*.js）'], {}
 
-    lines, failed, crashed = [], [], []
+    lines, failed, crashed, empty = [], [], [], []
     npass, nfail = 0, 0
 
     def record(name, code, out):
-        """把一个套件的结果记进汇总（JS / Python 共用同一口径）。
+        """把一个套件的结果记进汇总（JS / Python 共用同一口径）。判据见 classify_suite()。
 
-        三种结局必须都能从输出里分辨出来，尤其是第三种 —— 它以前不留任何线索：
-          ✅ 全过（exit 0，FAIL 0）
-          ❌ 断言失败（有 FAIL 行）
-          💥 崩了（exit != 0 且**一行 FAIL 都没有**：抛异常、找不到文件、语法错）
-        崩了的时候以前只在「失败>0」才收集明细，可崩溃时根本没有 FAIL 行，
-        于是 CI 日志里只剩「❌ 通过 0 失败 0」，得把套件单独跑一遍才知道为什么。
-        那次三个套件硬编码了开发机绝对路径，在 Linux runner 上 ENOENT 直接死 ——
-        结论明明在 stderr 里，却被门禁自己吞掉了。
+        三种坏结局都必须留下线索，因为它们以前都留过"假绿"：
+          ❌ 断言失败 → 印 FAIL 行
+          💥 崩了     → exit≠0 却一行 FAIL 都没有，以前只在「失败>0」时收集明细，
+                        于是 CI 日志只剩「❌ 通过 0 失败 0」，得单独跑才知道为什么
+          ⚠️ 空跑     → exit 0 且零断言，以前**直接记成 ✅**
         """
+        r = classify_suite(code, out)
+        p, f = r['passed'], r['failed']
         nonlocal npass, nfail
-        p = len(re.findall(r'^PASS', out, re.M))
-        f = len(re.findall(r'^FAIL', out, re.M))
         npass += p
         nfail += f
-        is_crash = (code != 0 and f == 0)
-        ok = (code == 0 and f == 0)
         lines.append('  %-26s %s  通过 %3d  失败 %d%s' % (
-            name, '✅' if ok else ('💥' if is_crash else '❌'), p, f,
-            '   exit=%d' % code if is_crash else ''))
-        if ok:
+            name, VERDICT_MARK[r['verdict']], p, f,
+            '   exit=%d' % code if r['verdict'] == 'crash' else ''))
+        if r['ok']:
             return
         failed.append(name)
         for ln in out.splitlines():
             if ln.startswith('FAIL'):
                 lines.append('        ' + ln)
-        if is_crash:
+        if r['verdict'] == 'crash':
             crashed.append(name)
             body = [l for l in out.rstrip().splitlines() if l.strip()]
             lines.append('        ↑ 一条断言都没跑完（exit %d），末尾 %d 行输出：'
                          % (code, min(CRASH_TAIL_LINES, len(body))))
             for ln in body[-CRASH_TAIL_LINES:]:
                 lines.append('        | ' + ln[:220])
+        elif r['verdict'] == 'empty':
+            empty.append(name)
+            lines.append('        ↑ exit 0 但一条断言都没打印 —— 脚本被整段跳过或提前收尾了。'
+                         '这种情况以前会被记成「✅ 通过 0 失败 0」，只看日志根本发现不了。')
 
     jobs = [(s, [node, s], env) for s in suites]
     for s, argv, e in jobs:
         code, out = run(argv, env=e)
         record(s, code, out)
     # Python 套件（native host 等）走同一个计数口径
-    for s in py_test_suites():
+    py = py_test_suites()
+    for s in py:
         code, out = run([sys.executable, s])
         record(s, code, out)
 
-    total_suites = len(jobs) + len(py_test_suites())
+    total_suites = len(jobs) + len(py)
     log('\n测试套件：', quiet)
     for ln in lines:
         log(ln, quiet)
     if crashed:
         log('\n注意：有 %d 个套件是「崩溃」而不是「断言失败」—— 上面已附它们的末尾输出。'
             % len(crashed), quiet)
+    if empty:
+        log('\n注意：有 %d 个套件一条断言都没跑（exit 0）—— 门禁按失败处理。'
+            % len(empty), quiet)
     summary = {'suites': total_suites, 'passed': npass, 'failed': nfail,
-               'failedSuites': failed, 'crashedSuites': crashed}
+               'failedSuites': failed, 'crashedSuites': crashed,
+               'emptySuites': empty}
     return (not failed), failed, summary
+
+
+def check_git_tracking(quiet=False):
+    """门禁依赖的文件必须都已纳入 git。返回 (ok, problems, warnings)。
+
+    这是「本地绿、CI 红」的**通类**，不只是那 12 个硬编码路径那一次：
+    CI 是一次全新 checkout，**只有被 git 跟踪的文件存在**；本地却还有未跟踪的、
+    以及被 .gitignore 悄悄挡掉的。于是本地能全绿，推到远端立刻红，而两边看到的
+    现象完全不同（本地：一切正常；CI：文件不存在）。
+
+    两种漏法，都会静默发生：
+      · 新加文件后忘了 `git add`（提交时少 add 一个文件就够）；
+      · 路径恰好命中 .gitignore —— 本项目有 `*.zip` / `dist/` / `build*/`（带斜杠，
+        **只忽略目录**）/ `artifacts/...`。比如把新模块放进 `build/` 下、或起个
+        `.zip` 后缀的名字，本地永远正常，CI 永远红。
+
+    没装 git / 不是仓库时给一条警告放行：环境缺失不是代码问题，拿它拦人只会
+    逼出 `--no-verify`，把守卫本身废掉。
+    """
+    code, out = run(['git', 'ls-files'], quiet=True)
+    if code != 0:
+        return True, [], ['跳过 git 跟踪校验（这里不是 git 仓库，或环境里没有 git）']
+
+    tracked = set(l.strip().replace('\\', '/') for l in out.splitlines() if l.strip())
+    needed = set(collect(quiet=True))
+    needed.update(test_suites())
+    needed.update(py_test_suites())
+    needed.update(GATE_SELF_FILES)
+    needed.update(workflow_files())
+
+    problems = []
+    for rel in sorted(needed):
+        if not os.path.exists(os.path.join(HERE, rel)):
+            problems.append('门禁需要的文件不存在：%s' % rel)
+            continue
+        if rel in tracked:
+            continue
+        icode, _ = run(['git', 'check-ignore', '-q', rel], quiet=True)
+        if icode == 0:
+            problems.append('%s 被 .gitignore 忽略 —— 本地在，CI 的 checkout 里没有' % rel)
+        else:
+            problems.append('%s 还没纳入 git —— 本地在，CI 的 checkout 里没有' % rel)
+    return (not problems), problems, []
 
 
 # ---------------------------------------------------------------- manifest
@@ -423,6 +538,29 @@ def check_manifest(m):
                     problems.append('background.js importScripts 的脚本不在打包白名单里：%s' % imp)
         except Exception as e:
             warnings.append('读取 background.js 检查 importScripts 失败：%s' % e)
+
+    # 页面 HTML 里 <script src> / <link href> 引用的本地文件同样必须进包。
+    # manifest 只声明"有哪些页面"，页面自己再引用什么它管不着 —— 所以这条得单独扫。
+    # 漏了它的后果和 rulecheck.js 那次一模一样（新加一个共享模块、忘了加白名单，
+    # 包缺文件、扩展一加载就坏），只是入口从 manifest 换成了 HTML。
+    for page in HTML_PAGES:
+        ppath = os.path.join(HERE, page)
+        if not os.path.exists(ppath):
+            continue
+        try:
+            html = io.open(ppath, encoding='utf-8').read()
+        except Exception as e:
+            warnings.append('读取 %s 校验其内部引用失败：%s' % (page, e))
+            continue
+        for ref in HTML_LOCAL_RE.findall(html):
+            if re.match(r'^(?:[a-z][a-z0-9+.-]*:)?//', ref, re.I) or ref.startswith('data:') \
+                    or ref.startswith('#') or ref.startswith('{{'):
+                continue                      # 外链 / data: / 页内锚点 / 模板占位
+            rel = ref.split('?')[0].split('#')[0].replace('\\', '/')
+            while rel.startswith('./'):
+                rel = rel[2:]
+            if rel and rel not in packaged:
+                problems.append('%s 引用的文件不在打包白名单里（包会缺它）：%s' % (page, rel))
 
     # Tier B（指定下载器）的本机代理必须真的进包。
     # 这不是漂亮话：INCLUDE_DIRS 曾经只有 icons，打出来的 zip 里没有 native-host/，

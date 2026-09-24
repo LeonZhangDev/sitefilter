@@ -1,10 +1,21 @@
 name: CI
 
-# 每次推送 / PR 都跑一遍完整门禁：
-#   ① JS 语法检查  ② 全部测试套件（JS + Python）  ③ manifest 校验 + 试打包
-# 只要有任何失败，这个 workflow 变红 —— 门禁与本地 `python ci.py` 是同一份逻辑。
+# 每次推送 / PR 都跑一遍完整门禁 —— 和本地 `python ci.py` 是**同一个入口**：
+#   ① git 卫生  ② JS 语法检查  ③ 全部测试套件（JS + Python）  ④ manifest 校验 + 试打包
+# 只要有任何失败，这个 workflow 变红。
+#
+# ⚠️ 这里**不许**自己拼测试命令（不许出现 node --check、不许直接跑 _test_*.js）。
+#    两套命令一定会漂移，而漂移的方向通常是「CI 跑得比本地少」—— 那就是假绿：
+#    workflow 显示全绿，其实只跑了一半。`_test_assembly.js` 会盯着这一点。
+#
 # 套数**不写在这里**：它会随新增套件变化，写死必过期（README 里的「N 套」由
 # `_test_docs.js` 守着，这里没必要再抄一份 —— 抄了也没人守）。
+#
+# 矩阵：ubuntu + windows，都只跑 node 22 / python 3.12（与本地开发环境一致）。
+#   · 只跑一个 node 版本是**有意的**：node 在这里只是测试运行器，多一条腿只会让
+#     CI 时间翻倍、红的机会翻倍，换不来真实收益（扩展跑在浏览器里，不跑在 node 上）。
+#   · windows 那条腿是为产品本身加的：本机下载器桥（native-host/）要动注册表与
+#     绝对路径，这类问题只在 Windows 上才暴露得出来。
 
 on:
   push:
@@ -12,36 +23,47 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# 同一分支的新推送取消还在跑的老 run —— 省额度，也让结论只对最新 commit 负责。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   gate:
-    name: 门禁（语法 + 测试 + 打包校验）
-    runs-on: ubuntu-latest
+    name: 门禁（${{ matrix.os }}）
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        node: [20, 22]
+        os: [ubuntu-latest, windows-latest]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 Node ${{ matrix.node }}
+      - name: 安装 Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: '22'
 
-      - name: 安装 Python
+      - name: 安装 Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
-      - name: 安装依赖（jsdom）
-        run: npm install --no-audit --no-fund
+      # npm ci，不是 npm install：严格按 package-lock.json 装。
+      # install 会在 CI 里悄悄改写锁文件、也可能装出与锁文件不同的版本，
+      # 于是"本地绿、CI 绿"背后其实是两棵不同的依赖树。
+      - name: 安装依赖（jsdom，严格按锁文件）
+        run: npm ci --no-audit --no-fund
 
       - name: 跑门禁
         run: python ci.py --out build
 
       - name: 上传产物
-        if: matrix.node == 22
+        if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
           name: sitefilter-zip
