@@ -25,7 +25,16 @@
 
 ## Verification
 
-- SiteFilter: 24 suites, 1344 assertions, zero failures, plus package validation.
+- SiteFilter: 24 suites, 1347 assertions, zero failures, plus package validation.
+  (2026-09-24 updated: **新增的 windows 腿第一次跑就抓到一个真 bug，已修** ——
+  GitHub 的 `windows-latest` 是 en-US locale ⇒ Python 的 stdout 编码是 **cp1252** ⇒
+  `print('门禁')` 直接 `UnicodeEncodeError` 崩在**第一行**，整套测试一条都没跑
+  （开发机是中文 Windows / cp936，永远复现不了）。修法：三个 Python 入口钉 UTF-8 输出，
+  `run()` 给子进程带 `PYTHONIOENCODING=utf-8`；`_test_ci_gate.py` 新增 3 项**在真 cp1252
+  环境里跑**的断言。复现手法：`PYTHONIOENCODING=cp1252 python ci.py`。
+  另：本地用 `git clone` 到临时目录模拟了 runner 的检出形状（`core.autocrlf=true` ⇒
+  `.js/.py/.md` 检出为 CRLF，而 `.githooks/*` 与 `*.yml` 靠 `.gitattributes` 保持 LF），
+  在该形状下门禁同样全绿 —— LF 工作区里跑绿**不能**证明 CRLF 下也绿。)
   (2026-09-24 updated: **防假绿 + 不变量加固**，产品行为零变化，版本号与 `schemaVersion` 均未动。
   ① 「`exit 0` 但零断言」现在判红 —— 判据从 `run_tests()` 的闭包抽成模块级纯函数
   `classify_suite()`，四种结局（`ok`/`fail`/`crash`/`empty`）分开，`empty` 按失败处理；

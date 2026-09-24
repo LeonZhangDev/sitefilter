@@ -53,6 +53,25 @@
 - 测试套数 23 → **24**（README 与 `docs/verify/manual-acceptance.md` 两处，由 `_test_docs.js` 守）。
 - README 补上推送前钩子、git 卫生两步的说明；`_test_ci_gate.py` 进文件结构清单。
 
+### 修复（继续）：windows 腿第一次跑就抓到一个真 bug
+
+- **门禁在 GitHub 的 windows runner 上崩在第一条 `print`** ——
+  `UnicodeEncodeError: 'charmap' codec can't encode characters ...`，指向 `encodings/cp1252.py`。
+  Windows 上 Python 的 stdout 编码**跟 locale 走**，runner 是 en-US（cp1252），
+  印一句中文就抛异常，于是**整套测试一条都没跑**；开发机是中文 Windows（cp936），
+  **本地永远复现不了**。本地等价复现：`PYTHONIOENCODING=cp1252 python ci.py`（报错逐字一致）。
+  修法：三个 Python 入口（`ci.py` 经 `make_package.py` 顶层、`_test_native_host.py` 自带一份）
+  把 stdout/stderr 钉成 UTF-8；`run()` 给子进程统一带 `PYTHONIOENCODING=utf-8`
+  （输出走管道时子进程同样跟 locale 走，否则新套件印中文会崩成"崩溃"而不是"断言失败"）。
+- `_test_ci_gate.py` 新增 3 项（41 → 44）：**真的在 cp1252 环境里跑一次**，而不是查源码里
+  有没有那几个词 —— cp1252 下 `import make_package` 后打印中文不崩、`run()` 确实给子进程
+  钉了 `PYTHONIOENCODING`、`_test_native_host.py` 在 cp1252 下能跑完。
+- 教训：**加一条矩阵腿 = 打开一整类从未验证过的环境**，第一次跑大概率会红 ——
+  那不是"改动坏了"，是"以前没人往那儿看过"。同理，`%TEMP%` 复制只能证明"不依赖某个绝对路径"，
+  想验 runner 的**检出形状**（行尾 / 权限位）要用 `git clone` 到临时目录：
+  本地实测 `.js/.py/.md` 检出为 CRLF、`.githooks/*` 与 `*.yml` 保持 LF（`.gitattributes` 生效），
+  在该形状下门禁同样全绿。
+
 ## [1.4.0] - 2026-09-24
 
 > **次版本**：四条功能深化（回滚差异预览 / 磁力归属到卡片 / 规则命中时效画像 / iframe
