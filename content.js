@@ -68,6 +68,7 @@
     onboarded: false,       // 是否已看过新手引导
     lastRecDay: '',         // 上次看过推荐页的日期（用于每日自动推荐）
     showWhy: true,          // 悬停卡片显示「为什么被处理」浮层
+    confirmDestructive: true, // 破坏性操作（单键屏蔽）要连按两下才执行，防误触
     watchBtn: true,         // 卡片 hover 显示 ⏳ 待看按钮
     softBlock: false,       // 已废弃：由 blockDisplay 取代（保留仅为兼容旧数据，migrate 会读一次）
     blockDisplay: 'placeholder', // 屏蔽后显示方式：'hide' 完全隐藏 / 'placeholder' 保留占位（默认）/ 'soft' 灰化遮罩
@@ -98,6 +99,7 @@
     sfw: 's',      // Alt+S SFW 缩略图模糊
     boss: 'b',     // Alt+B 老板键
     lock: 'l',     // Alt+L 锁定 / 解锁悬浮球位置
+    pause: 'x',    // Alt+X 本页临时停用（刷新即恢复）
     prev: 'k',     // 上一条
     next: 'j',     // 下一条
     block: 'b',    // 屏蔽当前卡片的全部女优
@@ -351,6 +353,10 @@
   var probeMode = false;             // true = 当前页不是监管站点，仅启用链接探测
   var stats = { cards: 0, blocked: 0, fav: 0, hl: 0, dl: 0, soft: 0, preview: 0 };
   var revealHidden = false;          // 「显示被隐藏」临时揭示态（纯视图，不落存储）
+  var sessionPaused = false;         // 本页临时停用（会话级内存态：刷新即恢复，绝不落存储）
+                                     // 与 settings.boss 的区别：boss 是**持久**开关、把自己藏起来；
+                                     // 这个是**临时排除法** —— 怀疑页面异常是扩展造成时一键停用，
+                                     // 刷新或再按一次即恢复，不会留下任何残留设置。
   var foundActress = new Map();   // name -> count
   var foundTag = new Map();       // name -> count
   var foundMaker = new Map();
@@ -422,11 +428,15 @@
 
   function uid() { return 'r_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
+  // 悬浮球的常态字符。写成函数是为了让「本页临时停用」的状态只有一处判据 ——
+  // flashBall 的收尾、updateHostVisibility 都调它，否则闪完会恢复成 ◈ 看起来像没停用。
+  function ballGlyph() { return sessionPaused ? '⏸' : '◈'; }
+
   // 悬浮球短暂显示一个字符（操作反馈）
   function flashBall(txt, ms) {
     if (!ui || !ui.ball) return;
     ui.ball.textContent = txt;
-    setTimeout(function () { if (ui && ui.ball) ui.ball.textContent = '◈'; }, ms || 900);
+    setTimeout(function () { if (ui && ui.ball) ui.ball.textContent = ballGlyph(); }, ms || 900);
   }
 
   function debounce(fn, ms) {
@@ -1252,6 +1262,31 @@
   /* ---------------- 应用规则 ---------------- */
   var applying = false;   // 防止 runPass 自身改 DOM 触发 MutationObserver 造成死循环
 
+  /* 「隐藏来源」标记（架构预防，不是一个功能）。
+   * 卡片为什么被隐藏只有 runPass 自己知道，过去这个信息只活在 whyMap 里（WeakMap，
+   * 跨轮次就没了）。现在顺手写到 data-cf-hide-src 上，将来再加第二个"会隐藏卡片的模块"
+   * 时，一眼能看出是谁干的 —— 否则两个模块互相 remove class 会出现
+   * 「谁都认为自己没隐藏，但卡片就是不见」这类没法归因的问题。
+   * 纯标记属性，**不参与任何 CSS 选择器**，加它不改变任何可见行为。 */
+  function hideSrcOf(reasons) {
+    for (var i = 0; i < reasons.length; i++) {
+      var a = reasons[i].a;
+      if (a === 'block') return 'block';    // 命中屏蔽规则
+      if (a === 'filter') return 'filter';  // 「只看收藏 / 只看★番号」筛掉的
+    }
+    return '';
+  }
+  function applyHideSrc(card, reasons) {
+    var src = hideSrcOf(reasons);
+    if (src) card.setAttribute('data-cf-hide-src', src);
+    else card.removeAttribute('data-cf-hide-src');
+  }
+  /* whyMap 与来源标记永远一起写 —— 分两处写迟早会漏一处（这正是 F1 那类 bug 的形状）。 */
+  function noteWhy(card, reasons) {
+    whyMap.set(card, reasons);
+    applyHideSrc(card, reasons);
+  }
+
   function clearMarks() {
     var els = document.querySelectorAll('.cf-blocked,.cf-placeholder,.cf-fav,.cf-hl,.cf-seen,.cf-sfw,.cf-favcode,.cf-watch,.cf-card,.cf-dl,.cf-soft,.cf-peek,.cf-preview,.cf-hasmagnet');
     for (var i = 0; i < els.length; i++) {
@@ -1259,6 +1294,7 @@
       el.classList.remove('cf-blocked', 'cf-placeholder', 'cf-fav', 'cf-hl', 'cf-seen', 'cf-sfw', 'cf-favcode', 'cf-watch', 'cf-card', 'cf-dl', 'cf-soft', 'cf-peek', 'cf-preview', 'cf-hasmagnet');
       try { delete el.dataset.cfCode; } catch (e) { }
       try { delete el.dataset.cfMg; } catch (e) { }
+      try { delete el.dataset.cfHideSrc; } catch (e) { }   // 来源标记随 class 一起清，别留残影
       el.style.removeProperty('--cf-hl-color');
       el.style.removeProperty('--cf-hl-glow');
       var btn = el.querySelector(':scope > .cf-favbtn');
@@ -1287,6 +1323,7 @@
       var el = els[i];
       el.classList.remove('cf-blocked', 'cf-placeholder', 'cf-soft', 'cf-peek', 'cf-fav', 'cf-hl', 'cf-seen', 'cf-sfw', 'cf-favcode', 'cf-watch', 'cf-filt-out', 'cf-preview', 'cf-hasmagnet');
       try { delete el.dataset.cfMg; } catch (e) { }
+      try { delete el.dataset.cfHideSrc; } catch (e) { }
       el.style.removeProperty('--cf-hl-color');
       el.style.removeProperty('--cf-hl-glow');
       var pb = el.querySelector(':scope > .cf-peekbtn');
@@ -1371,6 +1408,18 @@
     }
     currentSite = matchSite(location.href);
     probeMode = !currentSite;
+
+    /* 本页临时停用：把扩展对页面做过的改动全部撤掉，回到「像没装扩展」的样子。
+     * 放在 resetPassMarks / findCards 之前 —— 语义是「彻底不管这页」，
+     * 而不是「按空规则跑一遍」（后者会留下 .cf-card 之类的痕迹，排除不了什么）。 */
+    if (sessionPaused) {
+      clearMarks();
+      clearClones();
+      stats = { cards: 0, blocked: 0, fav: 0, hl: 0, dl: 0, soft: 0, preview: 0 };
+      updateHostVisibility();
+      renderStats();
+      return;
+    }
 
     // 非监管站点：仍启用下载链接探测（可在设置里关闭）
     if (probeMode) {
@@ -1473,7 +1522,7 @@
           // 规则预览：不真正隐藏，只描边提示「这里会被屏蔽」，便于确认有没有误杀
           card.classList.add('cf-preview', 'cf-card');
           try { card.dataset.cfCode = ctx.code || ''; card.dataset.cfA = ctx.actressList.join(' || '); } catch (e) { }
-          whyMap.set(card, reasons);
+          noteWhy(card, reasons);
           stats.blocked++; stats.preview = (stats.preview || 0) + 1;
           return;
         } else if (st.blockDisplay === 'soft') {
@@ -1481,7 +1530,7 @@
           card.classList.add('cf-soft', 'cf-card');
           try { card.dataset.cfCode = ctx.code || ''; card.dataset.cfA = ctx.actressList.join(' || '); } catch (e) { }
           ensurePeekBtn(card, ctx.cid);
-          whyMap.set(card, reasons);
+          noteWhy(card, reasons);
           stats.blocked++; stats.soft++;
           return;
         } else {
@@ -1490,7 +1539,7 @@
           // 保留占位（默认档）：挂 .cf-placeholder 把 display:none 换成 visibility:hidden，
           // 网格位置与卡片数量都不变，只是看不见。'hide' 档不挂，走上面的 display:none。
           if (st.blockDisplay !== 'hide') card.classList.add('cf-placeholder');
-          whyMap.set(card, reasons);
+          noteWhy(card, reasons);
           stats.blocked++;
           return;
         }
@@ -1560,7 +1609,7 @@
         card.classList.add('cf-watch');
         reasons.push({ a: 'watch', v: ctx.cid, t: 'code', s: 'title' });
       }
-      whyMap.set(card, reasons);
+      noteWhy(card, reasons);
     });
 
     captureActressProfiles();
@@ -1816,6 +1865,10 @@
     'box-shadow:0 2px 6px rgba(0,0,0,.5);}',
     '.cf-ball.off{opacity:.4;}',
     '.cf-ball.hot{color:#ffc93c;border-color:rgba(255,201,60,.6);}',
+    /* 本页临时停用：球还在（它是唯一恢复入口），但明显「熄火」—— 灰、暗、降低存在感 */
+    '.cf-ball.paused{color:#7c8398;border-color:rgba(255,255,255,.1);opacity:.75;',
+    'background:radial-gradient(circle at 32% 26%,#2b3040 0%,#1c2029 52%,#12151c 100%);}',
+    '.cf-ball.paused:hover{opacity:1;color:#c9cfdd;}',
     '.cf-panel{position:fixed;width:322px;max-height:74vh;display:none;flex-direction:column;overflow:hidden;',
     'background:rgba(20,22,32,.97);border:1px solid rgba(255,255,255,.12);border-radius:14px;',
     'box-shadow:0 16px 46px rgba(0,0,0,.6);backdrop-filter:blur(10px);}',
@@ -1837,6 +1890,8 @@
     'font-family:inherit;transition:background .15s,border-color .15s,color .15s;}',
     '.cf-tg .cf-bd:hover{background:rgba(255,255,255,.1);color:#e6e8ee;}',
     '.cf-tg .cf-bd.cf-bd-on{background:rgba(0,229,255,.14);border-color:rgba(0,229,255,.45);color:#8beeff;}',
+    /* 「本页暂停」：待机时同普通胶囊，停用时变琥珀色 —— 一眼看出这页被停用了 */
+    '.cf-tg .cf-bd.on{background:rgba(255,201,60,.16);border-color:rgba(255,201,60,.5);color:#ffd479;}',
     '.cf-st{display:flex;gap:8px;padding:8px 12px;font-size:12px;color:#9aa3b8;border-bottom:1px solid rgba(255,255,255,.07);}',
     '.cf-st b{color:#fff;font-weight:600;}',
     '.cf-tabs{display:flex;flex-wrap:wrap;gap:4px;padding:8px 12px 0;}',
@@ -1856,6 +1911,16 @@
     '.cf-mini.act[data-a="favorite"]{background:rgba(255,201,60,.22);border-color:#ffc93c;color:#ffe4a3;}',
     '.cf-mini.act[data-a="highlight"]{background:rgba(0,229,255,.18);border-color:currentColor;}',
     '.cf-empty{padding:18px 8px;text-align:center;color:#6f7893;font-size:12px;}',
+    /* 「🔍诊断」页签：本页每张被处理过的卡 + 原因，一行一张，点行跳到卡片 */
+    '.cf-whybar{padding:6px 4px 8px;font-size:11px;color:#8b93a7;border-bottom:1px solid rgba(255,255,255,.07);margin-bottom:4px;}',
+    '.cf-whyline{display:flex;align-items:flex-start;gap:6px;padding:5px 6px;border-radius:8px;cursor:pointer;}',
+    '.cf-whyline:hover{background:rgba(255,255,255,.06);}',
+    '.cf-wdot{flex:none;width:7px;height:7px;border-radius:50%;background:#ff4d6d;margin-top:5px;}',
+    '.cf-wdot.off{background:rgba(255,255,255,.16);}',
+    '.cf-wcode{flex:none;font-size:11px;color:#8beeff;font-variant-numeric:tabular-nums;min-width:58px;}',
+    '.cf-wtitle{flex:1;font-size:11px;color:#dfe4ef;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+    '.cf-wtags{flex:none;display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;max-width:118px;}',
+    '.cf-wtag{font-size:10px;background:rgba(255,255,255,.06);border-radius:5px;padding:1px 5px;white-space:nowrap;}',
     '.cf-dlrow{display:flex;align-items:center;gap:6px;padding:6px;border-radius:8px;border:1px solid rgba(255,255,255,.07);margin-bottom:5px;}',
     '.cf-dlrow:hover{background:rgba(255,255,255,.05);}',
     '.cf-dlrow .k{flex:none;font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(34,197,94,.18);color:#7ee2a8;}',
@@ -2087,6 +2152,7 @@
       '    <button type="button" class="cf-bd" id="bdBtn" title="切换屏蔽后的显示方式"></button>',
       '    <label data-tg="previewMode"><input type="checkbox" data-cb="previewMode">规则预览</label>',
       '    <label data-tg="boss"><input type="checkbox" data-cb="boss">老板键</label>',
+      '    <button type="button" class="cf-bd" id="pauseBtn" data-act="pausePage" title="本页临时停用：页面立刻恢复原样，刷新或再点一次即恢复（不写任何设置）">⏸ 本页暂停</button>',
       '  </div>',
       '  <div class="cf-st" id="stats"></div>',
       '  <div class="cf-searchwrap"><input id="search" class="cf-search" placeholder="🔍 全局搜索：女优 / 标签 / 番号 / 规则…" /></div>',
@@ -2147,12 +2213,14 @@
     var warnEl = sr.getElementById('warn');
     var bdBtn = sr.getElementById('bdBtn');
     var pickEl = sr.getElementById('pick');
+    var pauseBtn = sr.getElementById('pauseBtn');
 
     var TABS = [
       { k: 'actress', t: '女优' }, { k: 'tag', t: '标签' }, { k: 'maker', t: '片商' },
       { k: 'series', t: '系列' }, { k: 'director', t: '导演' }, { k: 'keyword', t: '标题词' },
       { k: 'daily', t: '📅 今日' }, { k: 'recommend', t: '🆕推荐' }, { k: 'similar', t: '🔗相似' },
-      { k: 'watch', t: '⏳待看' }, { k: 'favcode', t: '★番号' }, { k: 'download', t: '下载' }, { k: 'site', t: '本页' }
+      { k: 'watch', t: '⏳待看' }, { k: 'favcode', t: '★番号' }, { k: 'download', t: '下载' },
+      { k: 'why', t: '🔍诊断' }, { k: 'site', t: '本页' }
     ];
     tabsEl.innerHTML = TABS.map(function (x) {
       return '<button data-tab="' + x.k + '">' + x.t + '</button>';
@@ -2166,7 +2234,7 @@
       dots.appendChild(d);
     });
 
-    ui = { host: host, sr: sr, ball: ball, panel: panel, list: list, stats: statsEl, qin: qin, qtype: qtype, dots: dots, tabs: tabsEl, tabDefs: TABS, flRating: flRating, flDate: flDate, importBtn: importBtn, lockBtn: lockBtn, search: searchEl, warn: warnEl, pick: pickEl, bdBtn: bdBtn };
+    ui = { host: host, sr: sr, ball: ball, panel: panel, list: list, stats: statsEl, qin: qin, qtype: qtype, dots: dots, tabs: tabsEl, tabDefs: TABS, flRating: flRating, flDate: flDate, importBtn: importBtn, lockBtn: lockBtn, search: searchEl, warn: warnEl, pick: pickEl, bdBtn: bdBtn, pauseBtn: pauseBtn };
 
     flRating.addEventListener('change', applyFilter);
     flDate.addEventListener('change', applyFilter);
@@ -2196,6 +2264,8 @@
     /* 事件绑定 */
     ball.addEventListener('click', function (e) {
       if (ball.dataset.moved === '1') { ball.dataset.moved = '0'; return; }
+      // 停用状态下，球只有「恢复」一个语义（此时面板没有内容可看）
+      if (sessionPaused) { toggleSessionPause(false); return; }
       togglePanel();
     });
 
@@ -2210,6 +2280,7 @@
         return;
       }
       if (t.dataset && t.dataset.tab) { activeTab = t.dataset.tab; renderList(); return; }
+      if (t.dataset && t.dataset.whyjump != null) { jumpToWhyCard(parseInt(t.dataset.whyjump, 10)); return; }
       if (t.id === 'bdBtn' || (t.dataset && t.dataset.bdcycle)) { cycleBd(); return; }
       if (t.dataset && t.dataset.fcv) { favFilter = t.dataset.fcv; renderFavCodes(); return; }
       if (t.dataset && t.dataset.watch) { watchDone(t.dataset.watch); return; }
@@ -2374,6 +2445,8 @@
 
   function togglePanel(force) {
     if (!ui) return;
+    // 本页停用期间面板没有内容可显示（runPass 不跑）—— 别让人对着空面板发愣
+    if (sessionPaused && force !== false) { flashBall('⏸ 已停用'); return; }
     var open = force != null ? force : !ui.panel.classList.contains('open');
     ui.panel.classList.toggle('open', open);
     if (open) {
@@ -2546,6 +2619,7 @@
     if (activeTab === 'daily') { renderDaily(); return; }
     if (activeTab === 'similar') { renderSimilar(); return; }
     if (activeTab === 'watch') { renderWatch(); return; }
+    if (activeTab === 'why') { renderWhy(); return; }
 
     if (activeTab === 'site') {
       var sel = (currentSite && currentSite.selector) || '自动识别';
@@ -2593,6 +2667,60 @@
         '</div>';
     }).join('');
     ui.list.innerHTML = html;
+  }
+
+  /* ---------------- 诊断视图：本页每张卡「为什么被这样处理」 ----------------
+   * 数据源就是 runPass 写进 whyMap 的 reasons —— **不重新算一遍规则**。
+   * 存在的意义：悬停浮层一次只能看一张，排查误杀（规则写太宽）时得挨个 hover；
+   * 这张表能一眼看出「本页被什么挡掉了多少、挡的是谁」，点一行还能跳过去看原件。 */
+  function renderWhy() {
+    var cards = [].slice.call(document.querySelectorAll('.cf-card'));
+    var rows = [];
+    cards.forEach(function (c) {
+      var rs = whyMap.get(c);
+      if (!rs || !rs.length) return;
+      rows.push({
+        el: c, rs: rs, hide: hideSrcOf(rs),
+        code: c.dataset.cfCode || '',
+        title: (c.dataset.cfTitle || txt(c) || '').slice(0, 60)
+      });
+    });
+    if (!rows.length) {
+      ui.list.innerHTML = '<div class="cf-empty">本页暂无被处理的卡片。<br>' +
+        '（这里只列「命中规则 / 被筛选 / 被收藏高亮 / 在待看」的卡；普通卡片不占位置。）</div>';
+      return;
+    }
+    // 被隐藏的排最前 —— 那正是用户想查的东西
+    rows.sort(function (a, b) { return (b.hide ? 1 : 0) - (a.hide ? 1 : 0); });
+    var hiddenN = rows.filter(function (r) { return !!r.hide; }).length;
+    var head = '<div class="cf-whybar">本页 ' + cards.length + ' 张卡 · 被处理 ' + rows.length +
+      (hiddenN ? '（其中隐藏 ' + hiddenN + '）' : '') + ' · 点一行可跳到该卡片</div>';
+    ui.list.innerHTML = head + rows.map(function (r, i) {
+      var tags = r.rs.slice(0, 4).map(function (x) {
+        return '<span class="cf-wtag" style="color:' + (WHY_COLOR[x.a] || 'inherit') + '">' +
+          escapeHtml(WHY_LABEL[x.a] || x.a) + ' ' + escapeHtml(String(x.v == null ? '' : x.v).slice(0, 18)) +
+          '</span>';
+      }).join('');
+      return '<div class="cf-whyline" data-whyjump="' + i + '" title="点击滚动到这张卡片">' +
+        '<span class="cf-wdot' + (r.hide ? '' : ' off') + '"></span>' +
+        '<span class="cf-wcode">' + escapeHtml(r.code || '—') + '</span>' +
+        '<span class="cf-wtitle">' + escapeHtml(r.title) + '</span>' +
+        '<span class="cf-wtags">' + tags + '</span></div>';
+    }).join('');
+    // 点击跳转要拿到**真实元素**：存 DOM 引用，不靠选择器反查（选择器可能匹配到别的卡）
+    ui._whyRows = rows;
+  }
+
+  // 从诊断列表跳到对应卡片。被隐藏的卡片先临时揭示，否则滚过去也是一片空白。
+  function jumpToWhyCard(i) {
+    var rows = (ui && ui._whyRows) || [];
+    var r = rows[i];
+    if (!r || !r.el) return;
+    if (r.hide && !revealHidden) toggleRevealHidden();
+    try { r.el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+    catch (e) { try { r.el.scrollIntoView(); } catch (e2) { } }
+    r.el.classList.add('cf-navcur');
+    setTimeout(function () { try { r.el.classList.remove('cf-navcur'); } catch (e) { } }, 1600);
   }
 
   /* ---------------- 磁力交给本机下载工具 ----------------
@@ -3557,6 +3685,7 @@
     if (act === 'opt') { try { chrome.runtime.sendMessage({ type: 'sf_open_options' }); } catch (e) { } return; }
     if (act === 'lock') { toggleBallLock(); return; }
     if (act === 'revealHidden') { toggleRevealHidden(); return; }
+    if (act === 'pausePage') { toggleSessionPause(); return; }
     if (act === 'onboardClose') { S.settings.onboarded = true; saveSettings(); renderOnboard(); return; }
     if (act === 'flClear') {
       if (ui.flRating) ui.flRating.value = '';
@@ -3682,13 +3811,33 @@
     }
   }
 
+  /* ---------------- 本页临时停用（第 4 条：排除法） ----------------
+   * 「这个页面显示不正常，是不是扩展搞的？」—— 一键停用，页面立刻回到扩展没介入的样子。
+   * 与「老板键」的区别：boss 是**持久**设置、把自己藏起来；这个是**会话级**的，
+   * 刷新页面或再按一次即恢复，绝不写进 storage（所以也不会有"忘了关"的残留）。 */
+  function toggleSessionPause(force) {
+    sessionPaused = (force != null) ? !!force : !sessionPaused;
+    // 停用期间面板没有内容可显示（runPass 不跑），开着只会让人困惑 —— 关掉它
+    if (sessionPaused && ui && ui.panel.classList.contains('open')) togglePanel(false);
+    updateHostVisibility();
+    if (ui && ui.pauseBtn) ui.pauseBtn.classList.toggle('on', sessionPaused);
+    flashBall(sessionPaused ? '⏸ 已停用' : '▶ 已恢复');
+    schedulePass();
+  }
+
   function updateHostVisibility() {
     if (!ui) return;
     var probeOk = probeMode && S.settings.probeLinks !== false && S.settings.probeAnySite !== false;
     var show = S.settings.showBall !== false && (!!currentSite || probeOk);
     ui.host.style.display = (show && !S.settings.boss) ? '' : 'none';
     ui.panel.classList.toggle('probe', !!probeMode);
-    ui.ball.title = probeMode ? 'SiteFilter · 下载链接探测（本页未纳入监管）' : 'SiteFilter（Alt+F 开合，可拖动）';
+    /* 本页停用时球**不消失** —— 它是唯一的恢复入口（刷新页面也能恢复，但不该逼用户刷新）。
+     * 只是变成灰色的 ⏸，点一下即恢复。 */
+    ui.ball.classList.toggle('paused', sessionPaused);
+    ui.ball.textContent = ballGlyph();
+    ui.ball.title = sessionPaused
+      ? 'SiteFilter · 本页已临时停用（点击恢复；刷新本页同样会恢复）'
+      : (probeMode ? 'SiteFilter · 下载链接探测（本页未纳入监管）' : 'SiteFilter（Alt+F 开合，可拖动）');
     if (ui.importBtn) ui.importBtn.style.display = (currentSite && S.settings.boss !== true) ? '' : 'none';
   }
 
@@ -4426,6 +4575,19 @@
    * 全局键：Alt + 单键（面板 / SFW / 老板键 / 锁球）
    * 面板内键：面板打开时生效，单键操作当前选中的卡片
    * Esc 固定不可改（否则用户可能把自己锁在面板里出不来） */
+  /* 破坏性操作的「两段式确认」（第 1 条防误触）。
+   * 单键屏蔽太容易按错了：面板开着、手在 j/k 上翻卡片，按错一个键就是「某位女优的
+   * 全部作品从此消失」。所以第一次按只提示、不执行，短时间内的第二次才真的写规则。
+   * 只对**会新建屏蔽规则**的动作生效；收藏 / 高亮 / 待看都可逆，不该被这一步拖累。 */
+  var ARM_MS = 2500;
+  var armedAct = '', armedAt = 0;
+  function armConfirm(act) {
+    var now = Date.now();
+    if (armedAct === act && (now - armedAt) < ARM_MS) { armedAct = ''; armedAt = 0; return true; }
+    armedAct = act; armedAt = now;
+    return false;
+  }
+
   function keys() {
     window.addEventListener('keydown', function (e) {
       var k = normKey(e.key);
@@ -4436,6 +4598,7 @@
         else if (k === keyOf('sfw')) { e.preventDefault(); S.settings.sfw = !S.settings.sfw; saveSettings(); syncToggles(); schedulePass(); }
         else if (k === keyOf('boss')) { e.preventDefault(); S.settings.boss = !S.settings.boss; saveSettings(); syncToggles(); updateHostVisibility(); schedulePass(); }
         else if (k === keyOf('lock')) { e.preventDefault(); toggleBallLock(); }
+        else if (k === keyOf('pause')) { e.preventDefault(); toggleSessionPause(); }
       }
 
       // Esc：关闭面板（固定键）
@@ -4485,7 +4648,15 @@
       var aEl = tc.querySelector('a[href]');
       var tHref = aEl ? aEl.getAttribute('href') : '';
 
-      if (hitAct === 'block' && tActs.length) { e.preventDefault(); tActs.forEach(function (nm) { toggleRule(nm, 'actress', 'block'); }); flashBall('屏蔽 ' + tActs[0]); return; }
+      if (hitAct === 'block' && tActs.length) {
+        e.preventDefault();
+        if (S.settings.confirmDestructive !== false && !armConfirm('block')) {
+          flashBall('再按 ' + keyLabel('block') + ' 确认'); return;
+        }
+        tActs.forEach(function (nm) { toggleRule(nm, 'actress', 'block'); });
+        flashBall('屏蔽 ' + tActs[0]);
+        return;
+      }
       if (hitAct === 'fav' && tActs.length) { e.preventDefault(); tActs.forEach(function (nm) { toggleRule(nm, 'actress', 'favorite'); }); flashBall('★ ' + tActs[0]); return; }
       if (hitAct === 'hl' && tActs.length) { e.preventDefault(); tActs.forEach(function (nm) { toggleRule(nm, 'actress', 'highlight'); }); flashBall('高亮 ' + tActs[0]); return; }
       if (hitAct === 'watch' && tCode) { e.preventDefault(); toggleWatch(tCode, { title: tTitle, url: tHref }); flashBall('⏳ ' + tCode); return; }

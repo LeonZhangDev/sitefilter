@@ -51,6 +51,7 @@ var DEFAULT_SETTINGS = {
   codeSearchBtns: true,
   autoSeen: true,
   auditWarn: true,
+  confirmDestructive: true,    // 破坏性操作（单键屏蔽）连按两下才执行，防误触
   keys: {},
   autoBackup: false,
   backupKeep: 7,               // 自动备份快照轮换份数：0 = 不轮换（无限累积）

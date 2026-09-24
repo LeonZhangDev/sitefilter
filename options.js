@@ -34,7 +34,8 @@ var DEFAULT_SETTINGS = {
   firstMatchWins: false, codeSearchBtns: true,
   keys: {},
   autoSeen: true,        // 打开详情页时自动把该番号标为已看
-  auditWarn: true        // 建屏蔽规则前先估算影响面，过宽时先确认
+  auditWarn: true,       // 建屏蔽规则前先估算影响面，过宽时先确认
+  confirmDestructive: true // 破坏性操作（单键屏蔽）要连按两下才执行，防误触
 };
 /* 站点表 / 维度作用范围来自 site-templates.js —— 与页面、service worker 同一份。 */
 if (typeof SF_SITES === 'undefined') {
@@ -53,6 +54,7 @@ var SWITCHES = [
   ['codeSearchBtns', '番号处显示多站直达（Bus / DB / 580 / XC）'],
   ['autoSeen', '打开详情页自动记录「已看」'],
   ['auditWarn', '建屏蔽规则前先估算影响面（过宽时先确认）'],
+  ['confirmDestructive', '破坏性操作连按两下确认（单键屏蔽防误触）'],
   ['probeLinks', '下载链接探测'], ['probeMark', '页面内标记下载链接'], ['probeAnySite', '非监管站点也探测']
 ];
 var TYPE_LABEL = { actress: '女优', tag: '标签', maker: '片商', series: '系列', director: '导演', keyword: '标题词', code: '番号', expr: '表达式' };
@@ -2259,7 +2261,7 @@ document.getElementById('undoBtn').addEventListener('click', doUndo);
  * —— 测试里有守卫断言两边的默认表与特殊键表完全相同，避免各写各的。
  * ===================================================================== */
 var DEFAULT_KEYS = {
-  panel: 'f', sfw: 's', boss: 'b', lock: 'l',
+  panel: 'f', sfw: 's', boss: 'b', lock: 'l', pause: 'x',
   prev: 'k', next: 'j', block: 'b', fav: 'f', hl: 'h', watch: 'p', open: 'enter'
 };
 var KEY_SPECIAL = ['enter', 'space', 'escape', 'tab', 'backspace', 'delete',
@@ -2270,7 +2272,8 @@ var KEY_GROUPS = [
       ['panel', '展开 / 收起悬浮面板'],
       ['sfw', 'SFW 缩略图模糊'],
       ['boss', '老板键（恢复页面原样并隐藏面板）'],
-      ['lock', '锁定 / 解锁悬浮球位置']
+      ['lock', '锁定 / 解锁悬浮球位置'],
+      ['pause', '本页临时停用（页面立刻恢复原样，刷新即恢复，不写设置）']
     ]
   },
   {

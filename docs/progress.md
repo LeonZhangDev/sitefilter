@@ -25,7 +25,7 @@
 
 ## Verification
 
-- SiteFilter: 24 suites, 1347 assertions, zero failures, plus package validation.
+- SiteFilter: 24 suites, 1372 assertions, zero failures, plus package validation.
   (2026-09-24 updated: **新增的 windows 腿第一次跑就抓到一个真 bug，已修** ——
   GitHub 的 `windows-latest` 是 en-US locale ⇒ Python 的 stdout 编码是 **cp1252** ⇒
   `print('门禁')` 直接 `UnicodeEncodeError` 崩在**第一行**，整套测试一条都没跑

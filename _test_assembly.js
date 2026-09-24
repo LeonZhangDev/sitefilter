@@ -307,5 +307,17 @@ check('content.js 是最后一个「通用」脚本（后面只允许站点专�
     codeOf(bg).indexOf('window.top.postMessage') === -1);
 }
 
+/* ============ manifest 权限：存储配额 ============
+   storage.local 在 Chrome 114+ 默认上限 10MB。规则库 + 快照 + hitDays(命中历史) +
+   已看记录都是会长大的（命中历史尤其），撑爆后**写入会静默失败** —— 用户看到的现象是
+   「刚建的规则过一会就没了」，而且没有任何报错。unlimitedStorage 属于无警告权限，
+   不会让扩展被停用。这条防的是「以后清理 manifest 时把它顺手删了」。 */
+{
+  const perms = manifest.permissions || [];
+  check('manifest 声明 unlimitedStorage（否则规则库/命中历史撑爆 10MB 后写入静默失败）',
+    perms.indexOf('unlimitedStorage') !== -1);
+  check('manifest 保留 storage 权限', perms.indexOf('storage') !== -1);
+}
+
 console.log('\n' + (pass ? '全部通过' : '存在失败项'));
 process.exit(pass ? 0 : 1);

@@ -449,6 +449,150 @@ const blockedOf = el => !!el && el.classList.contains('cf-blocked');
     }
   }
 
+  /* ============ ⑥ 本轮吸收：隐藏来源 / 诊断视图 / 本页停用 / 防误触 ============
+     四条都断言**运行时行为**，不是"源码里有没有那几个字"：
+     来源标记必须真出现在 DOM 上、诊断页必须真列出卡片、停用必须真把 class 撤掉、
+     防误触必须"第一次不建规则、第二次才建"。 */
+  {
+    const mkBlock = (id, v) => ({
+      id, type: 'actress', value: v, aliases: [], action: 'block',
+      match: 'contains', scope: 'actress', color: '', sites: [], enabled: true,
+      hits: 0, createdAt: Date.now(), expr: '', expiresAt: 0
+    });
+    const hostSr = (win) => {
+      const h = win.document.querySelector('.cf-host');
+      return h && h.shadowRoot;
+    };
+    const press = (win, key) => {
+      win.document.dispatchEvent(new win.KeyboardEvent('keydown', {
+        key, bubbles: true, cancelable: true
+      }));
+    };
+
+    // 6a. 隐藏来源标记：被屏蔽的卡带 data-cf-hide-src=block；没被处理的卡不带
+    {
+      const { win } = build({ rules: [mkBlock('rb1', '明星甲')] });
+      await sleep(600);
+      const c1 = cardOf(win.document, 'ABC-001');   // 明星甲 → 命中屏蔽
+      const c2 = cardOf(win.document, 'ABC-002');   // 新人乙 → 无规则
+      check('[来源] 被屏蔽规则的卡片带 data-cf-hide-src="block"',
+        !!c1 && c1.getAttribute('data-cf-hide-src') === 'block');
+      check('[来源] 未被处理的卡片不带 data-cf-hide-src',
+        !!c2 && !c2.hasAttribute('data-cf-hide-src'));
+    }
+    // 6b. 「只看收藏」筛掉的来源必须是 filter —— 两个隐藏来源要能分开归因
+    {
+      const { win } = build({ settings: { onlyFav: true }, rules: [] });
+      await sleep(600);
+      const c = cardOf(win.document, 'ABC-001');
+      check('[来源] 「只看收藏」筛掉的卡片来源为 filter（与屏蔽可区分）',
+        !!c && c.getAttribute('data-cf-hide-src') === 'filter');
+    }
+    // 6c. 来源标记要随「撤掉处理」一起消失，不能留残影
+    //     （用「本页暂停」触发 clearMarks —— 撤销只对 UI 改动作快照，载入的规则不在 undoStack 里）
+    {
+      const { win } = build({ rules: [mkBlock('rb2', '明星甲')] });
+      await sleep(600);
+      const doc = win.document;
+      check('[来源] 停用前带标记',
+        !!cardOf(doc, 'ABC-001') && cardOf(doc, 'ABC-001').getAttribute('data-cf-hide-src') === 'block');
+      const sr = hostSr(win);
+      sr.getElementById('pauseBtn').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+      await sleep(500);
+      const after = cardOf(doc, 'ABC-001');
+      check('[来源] 撤掉处理后来源标记被一并清掉（不留残影）',
+        !after || !after.hasAttribute('data-cf-hide-src'));
+    }
+    // 6d. 诊断视图：页签存在、能列出被处理的卡、顶部有汇总、点行不抛错
+    {
+      const { win } = build({ rules: [mkBlock('rb3', '明星甲')] });
+      await sleep(600);
+      const sr = hostSr(win);
+      check('[诊断] 悬浮面板已建立', !!sr);
+      const tab = sr && Array.from(sr.querySelectorAll('.cf-tabs button'))
+        .find(b => b.dataset.tab === 'why');
+      check('[诊断] 页签里有「诊断」', !!tab);
+      if (tab) {
+        tab.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+        await sleep(60);
+        const lines = sr.querySelectorAll('.cf-whyline');
+        const bar = sr.querySelector('.cf-whybar');
+        check('[诊断] 列出本页被处理的卡片', lines.length >= 1);
+        check('[诊断] 顶部汇总行说明了张数与隐藏数',
+          !!bar && /被处理/.test(bar.textContent) && /隐藏/.test(bar.textContent));
+        check('[诊断] 诊断行里能看到命中的规则值',
+          lines.length > 0 && /明星甲/.test(sr.querySelector('.cf-list').textContent));
+        let threw = false;
+        try { lines[0].dispatchEvent(new win.MouseEvent('click', { bubbles: true })); }
+        catch (e) { threw = true; }
+        check('[诊断] 点击诊断行可跳转且不抛错', !threw);
+      }
+    }
+    // 6e. 本页临时停用：撤掉全部改动 + 球变 ⏸ + 可再点恢复 + 球不消失
+    {
+      const { win } = build({ rules: [mkBlock('rb4', '明星甲')] });
+      await sleep(600);
+      const doc = win.document;
+      const sr = hostSr(win);
+      const pb = sr && sr.getElementById('pauseBtn');
+      check('[停用] 面板里有「本页暂停」按钮', !!pb);
+      check('[停用] 停用前卡片确实被屏蔽', blockedOf(cardOf(doc, 'ABC-001')));
+      if (pb) {
+        pb.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+        await sleep(500);
+        check('[停用] 停用后页面恢复原样（不带 .cf-blocked）',
+          !doc.querySelector('.cf-blocked') && !blockedOf(cardOf(doc, 'ABC-001')));
+        const ball = sr.getElementById('ball');
+        check('[停用] 悬浮球变 ⏸ 并带 paused 标记',
+          !!ball && ball.textContent === '⏸' && ball.classList.contains('paused'));
+        check('[停用] 悬浮球仍然存在（它是唯一恢复入口，不能自己消失）',
+          !!ball && (win.document.querySelector('.cf-host') || {}).style.display !== 'none');
+        pb.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+        await sleep(700);
+        check('[停用] 再点一次即恢复过滤', blockedOf(cardOf(doc, 'ABC-001')));
+        check('[停用] 恢复后悬浮球回到 ◈', sr.getElementById('ball').textContent === '◈');
+      }
+    }
+    // 6f. 破坏性操作防误触：第一次按屏蔽键不建规则，紧接着第二次才建
+    {
+      const { win, store } = build({ rules: [] });
+      await sleep(600);
+      const sr = hostSr(win);
+      const ball = sr && sr.getElementById('ball');
+      ball.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+      await sleep(80);
+      check('[防误触] 面板已打开', sr.getElementById('panel').classList.contains('open'));
+
+      press(win, 'j');   // 选中第一张卡
+      await sleep(40);
+      press(win, 'b');   // 第一次按屏蔽键
+      await sleep(120);
+      const n1 = (store.sf_data_v1.rules || []).filter(r => r.value === '明星甲').length;
+      check('[防误触] 第一次按屏蔽键不建规则（只提示）', n1 === 0);
+      check('[防误触] 第一次按下时球上给出「再按一次」提示',
+        /再按/.test(sr.getElementById('ball').textContent));
+
+      press(win, 'b');   // 第二次按屏蔽键
+      await sleep(250);
+      const n2 = (store.sf_data_v1.rules || []).filter(r => r.value === '明星甲' && r.action === 'block').length;
+      check('[防误触] 紧接着再按一次才真的建屏蔽规则', n2 === 1);
+    }
+    // 6g. 关掉防误触开关后，单次按键立即生效（说明它是可配置的，而不是硬编码）
+    {
+      const { win, store } = build({ rules: [], settings: { confirmDestructive: false } });
+      await sleep(600);
+      const sr = hostSr(win);
+      sr.getElementById('ball').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+      await sleep(80);
+      press(win, 'j');
+      await sleep(40);
+      press(win, 'b');
+      await sleep(250);
+      check('[防误触] 关掉开关后单次按键直接生效',
+        (store.sf_data_v1.rules || []).filter(r => r.value === '明星甲').length === 1);
+    }
+  }
+
   console.log(pass ? '\n新增功能专项测试全部通过 ✅' : '\n存在失败 ❌');
   process.exit(pass ? 0 : 1);
 })();

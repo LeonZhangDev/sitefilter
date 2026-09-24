@@ -5,6 +5,7 @@
   "description": "在指定网站右下角提供悬浮面板，按女优/标签/关键词屏蔽、收藏、高亮内容卡片。数据 100% 本地存储，不上传任何信息。",
   "permissions": [
     "storage",
+    "unlimitedStorage",
     "contextMenus",
     "tabs",
     "activeTab",
