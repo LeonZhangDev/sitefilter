@@ -12,7 +12,12 @@
 
 ## Verification
 
-- SiteFilter: 23 suites, 1198 assertions, zero failures, plus package validation.
+- SiteFilter: 23 suites, 1201 assertions, zero failures, plus package validation.
+  (2026-09-24 updated: `_test_docs.js` 的守卫范围补到 `docs/verify/manual-acceptance.md` ——
+  此前这份「照着它跑真机」的清单里，标题版本、断言总数、A0 的「25 项」都停在 v1.3.0 时代。
+  现在清单的**标题版本**与**每处「N 套」**由守卫盯着（且套数算法收成唯一一份），
+  断言总数则不再写死、改指向 `ci.py` 的实际输出 —— 它判不了，必过期。
+  清单 19 → 22 项断言。)
   (2026-09-24 updated: 修掉两条「本地门禁全绿、用户侧不可用」的缺陷 —— ① 发布包缺
   `native-host/`（Tier B 的本机桥没随包分发，用户照设置页提示找不到 install.py）；
   ② 正文里的隐形空白（U+FEFF / `&nbsp;` / 全角空格）会把磁力链接截断，而半截 hash 会被当

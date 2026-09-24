@@ -11,8 +11,11 @@
  *   · `docs/progress.md` 与 `docs/features/*` 一直写着「未合并 / 未推送 / 未发布」，而代码早已在
  *     `main` 上并推到了公开远端；`docs/requirements/README.md` 说三项新站的验证「仍未进行」，
  *     同一目录下的 004 报告里却有完整的验证记录。
+ *   · `docs/verify/manual-acceptance.md` 的标题版本停在 `v1.3.0`、断言总数停在 1158，而当时已经是
+ *     `1.3.1` / 1198。这份清单是**照着它去跑真机**的文档 —— 过期不会报错，只会让人拿着旧包的
+ *     预期去验收新包，然后把「预期本来就不对」记成一个失败。
  * 所以这里把「能机械核对的部分」钉死。判不了的部分（比如「N 项断言」的确切数字）不在此列 ——
- * 那要靠跑门禁，不靠读文档。
+ * 那要靠跑门禁，不靠读文档，因此**验收清单里索性不再写死断言总数**，改成指向 `ci.py` 的输出。
  */
 'use strict';
 const fs = require('fs');
@@ -27,6 +30,16 @@ const readDoc = f => fs.readFileSync(path.join(EXT, f), 'utf8').replace(/\r\n/g,
 
 const readme = readDoc('README.md');
 const manifest = JSON.parse(read('manifest.json'));
+
+/* 测试套数的**唯一**算法（README 与验收清单共用同一份，别各写一套）。
+   发现规则与 make_package.py::test_suites() / py_test_suites() 保持一致：
+   _smoke.js + 全部 _test_*.js + 全部 _test_*.py。加了套件却忘了改文档会在这里红。 */
+const SUITE_COUNT = (() => {
+  const files = fs.readdirSync(EXT);
+  return (files.includes('_smoke.js') ? 1 : 0)
+    + files.filter(n => /^_test_.*\.js$/.test(n)).length
+    + files.filter(n => /^_test_.*\.py$/.test(n)).length;
+})();
 
 /* ---- 1. README 的版本声明必须等于 manifest.json / SCHEMA_VERSION 的真实值 ---- */
 {
@@ -47,18 +60,13 @@ const manifest = JSON.parse(read('manifest.json'));
 }
 
 /* ---- 2. README 声明的测试套数必须等于「自动发现」的真实套数 ----
-   发现规则与 make_package.py::test_suites() / py_test_suites() 保持一致：
-   _smoke.js + 全部 _test_*.js + 全部 _test_*.py。加了套件却忘了改 README 会在这里红。 */
+   （算法见文件顶部的 SUITE_COUNT —— 不在这里重写一套。） */
 {
-  const files = fs.readdirSync(EXT);
-  const suites = (files.includes('_smoke.js') ? 1 : 0)
-    + files.filter(n => /^_test_.*\.js$/.test(n)).length
-    + files.filter(n => /^_test_.*\.py$/.test(n)).length;
   const claimed = [...readme.matchAll(/(\d+)\s*套/g)].map(x => x[1]);
-  check('README 里每处「N 套」都等于真实套数（' + suites + '）',
-    claimed.length > 0 && claimed.every(c => Number(c) === suites));
-  if (!claimed.every(c => Number(c) === suites)) {
-    console.log('        README 写的：' + claimed.join(' / ') + '，实际：' + suites);
+  check('README 里每处「N 套」都等于真实套数（' + SUITE_COUNT + '）',
+    claimed.length > 0 && claimed.every(c => Number(c) === SUITE_COUNT));
+  if (!claimed.every(c => Number(c) === SUITE_COUNT)) {
+    console.log('        README 写的：' + claimed.join(' / ') + '，实际：' + SUITE_COUNT);
   }
 }
 
@@ -76,6 +84,8 @@ const manifest = JSON.parse(read('manifest.json'));
       'F1 已修：native-host/ 随包分发（zip 20 → 23 个条目）'],
     ['docs/verify/manual-acceptance.md', '被 L2「残缺串丢弃」',
       'F2 已修：截断串其实被当合法磁力收下（一条点开下不动的链接），现在补回完整串'],
+    ['docs/verify/manual-acceptance.md', '1158',
+      '断言总数不再写死在清单里（判不了、必过期），改指向 `python ci.py` 的输出'],
   ];
   STALE.forEach(([f, bad, why]) => {
     check(f + ' 不再宣称「' + bad + '」（' + why + '）', readDoc(f).indexOf(bad) === -1);
@@ -113,6 +123,26 @@ const manifest = JSON.parse(read('manifest.json'));
     });
   check('文档内部链接指向的文件都存在', broken.length === 0);
   if (broken.length) console.log('        断链：' + broken.join(', '));
+}
+
+/* ---- 6. 人工验收清单的版本与套数必须与当前构建一致 ----
+   这份清单是「照着它去跑真机」的实时文档：标题版本与文中每处「N 套」一旦过期，
+   验收的人就会拿着**旧包的预期**去核**新包**，把「预期本来就不对」记成一个失败。
+   清单里的「N 项断言」不在此列 —— 判不了，所以文里已改成指向 `ci.py` 的输出。 */
+{
+  const doc = readDoc('docs/verify/manual-acceptance.md');
+
+  const v = (doc.match(/^#\s*人工验收清单（v([0-9][0-9.]*)）/m) || [])[1];
+  check('人工验收清单的标题版本与 manifest.json 一致'
+    + (v ? '（' + v + '）' : '（标题里没找到版本）'),
+    !!v && v === String(manifest.version));
+
+  const claimed = [...doc.matchAll(/(\d+)\s*套/g)].map(x => x[1]);
+  check('人工验收清单里每处「N 套」都等于真实套数（' + SUITE_COUNT + '）',
+    claimed.length > 0 && claimed.every(c => Number(c) === SUITE_COUNT));
+  if (!claimed.every(c => Number(c) === SUITE_COUNT)) {
+    console.log('        清单写的：' + claimed.join(' / ') + '，实际：' + SUITE_COUNT);
+  }
 }
 
 console.log('\n' + (pass ? '全部通过' : '存在失败项'));
