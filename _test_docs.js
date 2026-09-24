@@ -71,7 +71,8 @@ const SUITE_COUNT = (() => {
 }
 
 /* ---- 3. 已被事实推翻的说法不许回来 ----
-   这些字符串曾经真实存在于文档里，且都是「代码往前走、文档没跟上」造成的。 */
+   这些字符串曾经真实存在于文档里 —— 要么是「代码往前走、文档没跟上」，要么是已被明确
+   删除 / 推翻的提案。两种情况都不该靠人的记性守着。 */
 {
   const STALE = [
     ['docs/progress.md', 'not been merged', '两个仓库的集成都已并入 main 并推送'],
@@ -80,6 +81,8 @@ const SUITE_COUNT = (() => {
     ['docs/features/xchina-collector-integration.md', 'has not been merged', '集成已在 main 上'],
     ['docs/requirements/README.md', '仍未进行', '004 报告里已有完整验证记录'],
     ['docs/requirements/README.md', '其余待定', '003 的 ①–⑩ 已全部有结论'],
+    ['docs/requirements/003-feature-suggestions.md', 'L5',
+      '2026-09-24 Leon 要求从建议稿删除该提案：磁力止于 ⑧ 的 Tier A/B，不再单列'],
     ['docs/verify/manual-acceptance.md', '只有 20 个条目',
       'F1 已修：native-host/ 随包分发（zip 20 → 23 个条目）'],
     ['docs/verify/manual-acceptance.md', '被 L2「残缺串丢弃」',
