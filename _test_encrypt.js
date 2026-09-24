@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const EXT = 'C:\\Users\\admin\\Desktop\\site-filter';
+const EXT = __dirname;
 const js = fs.readFileSync(path.join(EXT, 'options.js'), 'utf8');
 
 let pass = true;

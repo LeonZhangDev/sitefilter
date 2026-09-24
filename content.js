@@ -10,7 +10,7 @@
   window.__SITEFILTER_LOADED__ = true;
 
   var DATA_KEY = 'sf_data_v1';
-  var SCHEMA_VERSION = 6;   // 数据结构版本：改结构时 +1，并在 migrate() 里补一步
+  var SCHEMA_VERSION = 7;   // 数据结构版本：改结构时 +1，并在 migrate() 里补一步
   var DEBUG = false;
   function log() { if (DEBUG) console.log.apply(console, ['[SF]'].concat([].slice.call(arguments))); }
 
@@ -356,9 +356,23 @@
   var foundMaker = new Map();
   var foundSeries = new Map();
   var foundDirector = new Map();
-  var dlLinks = [];               // 探测到的下载链接
+  var dlLinks = [];               // 探测到的下载链接（顶层 frame 的汇总视图）
+  var ownLinks = [];              // 只包含「本 frame 自己探到的」，子 frame 上报的不在内
+  var frameLinks = {};            // frameId -> 子 frame 上报的 [{raw, type}]（顶层 frame 汇总展示）
+  var magnetByCard = new Map();   // 卡片元素 -> 该卡上的链接列表（角标 / 右键菜单用）
   var dlSeenCodes = {};           // 当前页出现过的番号
   var hitDelta = new Map();       // ruleId -> 增量命中数
+
+  /* 当前是否顶层 frame。只判一次（frame 不会变）。
+   * 子 frame 里**不建面板 / 不挂快捷键 / 不应用规则**，只做「探测 + 上报」：
+   *   · 这些站点的 iframe 多半是播放器位或隐藏的广告位，在里面画悬浮球没有意义；
+   *   · 规则应用会改写 iframe 内部 DOM，可能弄坏播放器，而用户也看不到面板；
+   *   · 每个 frame 都建一份 shadow UI 会互相打架（这就是原来 all_frames:false 的原因）。
+   * 但链接探测要在子 frame 里做 —— 有些站把画廊/磁力列表整个塞在 iframe 里，
+   * 顶层扫不到。探测结果经后台转发给顶层 frame，并进「下载」页签。 */
+  var IS_TOP = (function () {
+    try { return window.top === window.self; } catch (e) { return false; }
+  })();
   var origPos = new WeakMap();    // 置顶前的位置记忆
   var whyMap = new WeakMap();     // 卡片 -> 命中原因（悬停浮层）
   var whyEl = null;               // 悬停浮层 DOM
@@ -519,6 +533,18 @@
           x.settings.blockDisplay = x.settings.softBlock ? 'soft' : 'hide';
         }
         delete x.settings.softBlock;   // 旧字段清掉，避免两份真相并存
+      },
+      // v6 → v7：规则命中按天分桶（rule.hitDays），供「时效画像」用 ——
+      //           在此之前只有累计 hits + 最后一次 lastHit，判不出
+      //           「以前命中过、最近一个月 0 次」（规则随站点改版失效）。
+      //           **刻意不回填历史**：累计 hits 反推不出每天各几次，摊平就是编数据。
+      //           所以这里只保证字段存在（空对象），语义是「从本版起开始记录」——
+      //           UI 必须把「没有分桶数据」与「近期 0 命中」分开说，别把老实规则误判成失效。
+      7: function (x) {
+        x.rules = (x.rules || []).map(function (r) {
+          if (r && (!r.hitDays || typeof r.hitDays !== 'object' || Array.isArray(r.hitDays))) r.hitDays = {};
+          return r;
+        });
       }
     };
     for (var v = from + 1; v <= SCHEMA_VERSION; v++) {
@@ -768,14 +794,40 @@
   }
 
   // 命中次数异步落盘，避免频繁写 storage
+  /* 命中分桶（v7）：rule.hitDays = { 'YYYY-M-D': n }。
+   * 键口径与 todayStr() / statsLog 一致（月、日不补零）⇒ **不能按字典序排序**
+   * （'2026-10-1' 字典序小于 '2026-9-9'，会删错）。按解析出的时间戳排。 */
+  var HIT_DAYS_KEEP = 30;   // 保留最近 30 个「有命中的天」——不是自然日窗口
+  function hitDayNum(k) {
+    var p = String(k).split('-');
+    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])).getTime();
+  }
+  function pruneHitDays(hd) {
+    var keys = Object.keys(hd);
+    if (keys.length <= HIT_DAYS_KEEP) return;
+    keys.sort(function (a, b) { return hitDayNum(a) - hitDayNum(b); });
+    for (var i = 0; i < keys.length - HIT_DAYS_KEEP; i++) delete hd[keys[i]];
+  }
+  // 把一份增量记到某条规则上（在内存与落盘副本两处各调一次，口径必须一致）
+  function addHitDay(r, n, day) {
+    if (!r.hitDays || typeof r.hitDays !== 'object' || Array.isArray(r.hitDays)) r.hitDays = {};
+    r.hitDays[day] = (r.hitDays[day] || 0) + n;
+    pruneHitDays(r.hitDays);
+  }
   var flushHits = debounce(function () {
     if (!hitDelta.size) return;
     var delta = hitDelta; hitDelta = new Map();
     var now = Date.now();
+    var day = todayStr();
     // 先更新内存，使面板/设置页即时可见「最近命中」
     delta.forEach(function (n, id) {
       for (var i = 0; i < S.rules.length; i++) {
-        if (S.rules[i].id === id) { S.rules[i].hits = (S.rules[i].hits || 0) + n; S.rules[i].lastHit = now; break; }
+        if (S.rules[i].id === id) {
+          S.rules[i].hits = (S.rules[i].hits || 0) + n;
+          S.rules[i].lastHit = now;
+          addHitDay(S.rules[i], n, day);
+          break;
+        }
       }
     });
     cfGet(function (o) {
@@ -783,7 +835,12 @@
       var rules = d.rules || [];
       delta.forEach(function (n, id) {
         for (var i = 0; i < rules.length; i++) {
-          if (rules[i].id === id) { rules[i].hits = (rules[i].hits || 0) + n; rules[i].lastHit = now; break; }
+          if (rules[i].id === id) {
+            rules[i].hits = (rules[i].hits || 0) + n;
+            rules[i].lastHit = now;
+            addHitDay(rules[i], n, day);
+            break;
+          }
         }
       });
       var p = {}; p[DATA_KEY] = d;
@@ -1196,11 +1253,12 @@
   var applying = false;   // 防止 runPass 自身改 DOM 触发 MutationObserver 造成死循环
 
   function clearMarks() {
-    var els = document.querySelectorAll('.cf-blocked,.cf-placeholder,.cf-fav,.cf-hl,.cf-seen,.cf-sfw,.cf-favcode,.cf-watch,.cf-card,.cf-dl,.cf-soft,.cf-peek,.cf-preview');
+    var els = document.querySelectorAll('.cf-blocked,.cf-placeholder,.cf-fav,.cf-hl,.cf-seen,.cf-sfw,.cf-favcode,.cf-watch,.cf-card,.cf-dl,.cf-soft,.cf-peek,.cf-preview,.cf-hasmagnet');
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
-      el.classList.remove('cf-blocked', 'cf-placeholder', 'cf-fav', 'cf-hl', 'cf-seen', 'cf-sfw', 'cf-favcode', 'cf-watch', 'cf-card', 'cf-dl', 'cf-soft', 'cf-peek', 'cf-preview');
+      el.classList.remove('cf-blocked', 'cf-placeholder', 'cf-fav', 'cf-hl', 'cf-seen', 'cf-sfw', 'cf-favcode', 'cf-watch', 'cf-card', 'cf-dl', 'cf-soft', 'cf-peek', 'cf-preview', 'cf-hasmagnet');
       try { delete el.dataset.cfCode; } catch (e) { }
+      try { delete el.dataset.cfMg; } catch (e) { }
       el.style.removeProperty('--cf-hl-color');
       el.style.removeProperty('--cf-hl-glow');
       var btn = el.querySelector(':scope > .cf-favbtn');
@@ -1224,10 +1282,11 @@
   // visibility:hidden，而 findCards() 用 getBoundingClientRect 判可见 ——
   // 若不先清除，被隐藏过的卡片会被过滤掉 → 规则撤销/清空后永远无法恢复。
   function resetPassMarks() {
-    var els = document.querySelectorAll('.cf-blocked,.cf-placeholder,.cf-soft,.cf-peek,.cf-fav,.cf-hl,.cf-seen,.cf-sfw,.cf-favcode,.cf-watch,.cf-filt-out,.cf-preview');
+    var els = document.querySelectorAll('.cf-blocked,.cf-placeholder,.cf-soft,.cf-peek,.cf-fav,.cf-hl,.cf-seen,.cf-sfw,.cf-favcode,.cf-watch,.cf-filt-out,.cf-preview,.cf-hasmagnet');
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
-      el.classList.remove('cf-blocked', 'cf-placeholder', 'cf-soft', 'cf-peek', 'cf-fav', 'cf-hl', 'cf-seen', 'cf-sfw', 'cf-favcode', 'cf-watch', 'cf-filt-out', 'cf-preview');
+      el.classList.remove('cf-blocked', 'cf-placeholder', 'cf-soft', 'cf-peek', 'cf-fav', 'cf-hl', 'cf-seen', 'cf-sfw', 'cf-favcode', 'cf-watch', 'cf-filt-out', 'cf-preview', 'cf-hasmagnet');
+      try { delete el.dataset.cfMg; } catch (e) { }
       el.style.removeProperty('--cf-hl-color');
       el.style.removeProperty('--cf-hl-glow');
       var pb = el.querySelector(':scope > .cf-peekbtn');
@@ -1302,6 +1361,14 @@
     if (!document.body || applying) return;
     applying = true;
     try {
+    /* 子 frame：只做链接探测，之后立刻返回。
+     * 不走下面的卡片分类 / 规则应用 —— 那些会改写 iframe 内部 DOM（可能是播放器），
+     * 而 iframe 里没有面板承载结果；探测结果由 probeLinks() 上报给顶层 frame。 */
+    if (!IS_TOP) {
+      stats = { cards: 0, blocked: 0, fav: 0, hl: 0, dl: 0, soft: 0, preview: 0 };
+      probeLinks();
+      return;
+    }
     currentSite = matchSite(location.href);
     probeMode = !currentSite;
 
@@ -2606,10 +2673,15 @@
     var ma = S.settings.magnetAction || 'copy';
     var showOpen = ma !== 'copy';
     var showCopy = ma !== 'open';
+    var frameN = Object.keys(frameLinks).reduce(function (n, fid) {
+      return n + ((frameLinks[fid] || []).length);
+    }, 0);
     var bar = '<div class="cf-dlbar">' +
       '<button data-act="copyAllMagnet">复制全部磁力</button>' +
       '<button data-act="copyAll">复制全部链接</button>' +
       (showOpen ? '<button data-act="openAllMagnet">用下载工具打开全部磁力</button>' : '') +
+      (frameN ? '<span class="alias" style="align-self:center;flex:0 0 auto;white-space:nowrap">' +
+        '含 ' + frameN + ' 条来自子框架</span>' : '') +
       '</div>';
 
     var rows = dlLinks.map(function (d, i) {
@@ -3225,7 +3297,7 @@
         color: opt.color || S.settings.hlColor || '#00e5ff',
         sites: opt.sites || [],
         enabled: true,
-        hits: 0, createdAt: Date.now()
+        hits: 0, hitDays: {}, createdAt: Date.now()
       });
     }
     saveRules();
@@ -3644,6 +3716,35 @@
 
   /* shortLabel() 在 magnet-core.js */
 
+  /* 把探测到的链接归到它所在的那张卡。
+   * pushLink 早就存了元素引用（d.el），但那个引用只用来画一圈绿虚线 ——
+   * 下载页签是**整页扁平**的：一页几十张卡片扫出几百条磁力时，
+   * 用户看到「xxx.mkv · 4.2GB」根本不知道对应哪张卡（图片站连标题都不全）。
+   * 归属这个信息一直在数据里，只是没接到卡片上。 */
+  function cardOf(el) {
+    if (!el || !el.closest) return null;
+    try { return el.closest('.cf-card'); } catch (e) { return null; }
+  }
+
+  /* 卡片角标：把「这张卡上有几条磁力」写在卡片右上角。
+   * 只加 class + data-*，角标本体交给 CSS ::after（见 content.css 的 .cf-hasmagnet）——
+   * **不插 DOM 节点**是刻意的：往页面里 insert 节点会触发自己的 MutationObserver，
+   * 等于每轮 pass 自激一次（这个循环已经靠 applying 标志挡过一回了，别再添一处）。
+   * on=false 时只负责把上一轮的角标摘干净（关掉「标记链接」/ 老板键之后要清）。 */
+  function markCardMagnets(on) {
+    var marked = document.querySelectorAll('.cf-hasmagnet');
+    for (var i = 0; i < marked.length; i++) {
+      marked[i].classList.remove('cf-hasmagnet');
+      try { delete marked[i].dataset.cfMg; } catch (e) { }
+    }
+    if (on === false) return;
+    magnetByCard.forEach(function (list, card) {
+      if (!card || card.isConnected === false) return;
+      card.classList.add('cf-hasmagnet');
+      try { card.dataset.cfMg = String(list.length); } catch (e) { }
+    });
+  }
+
   /* pushLink：把探测到的一条候选放进结果集
    * 去重键不再用整串 raw —— 同一部片换 tracker / 换 dn 顺序就是另一个串，
    * 旧写法会把它当两条（列表里出现两行一模一样的片）。按 infohash 归并才是对的。
@@ -3672,6 +3773,7 @@
       seen[k2] = d;
     }
     d.label = shortLabel(d);
+    d.card = el ? cardOf(el) : null;   // 归属（角标 / 右键菜单 / 面板分组都用它）
     arr.push(d);
   }
 
@@ -3697,10 +3799,61 @@
     pushLink(arr, seen, s, type, el);
   }
 
+  /* ---------- 跨 frame 汇总（子 frame 探测 → 顶层 frame 展示） ----------
+   * 通道：子 frame 用 chrome.runtime.sendMessage 发给后台，后台按 sender.frameId 记名，
+   * 再 chrome.tabs.sendMessage(tabId, msg, {frameId: 0}) 转给顶层 frame。
+   * **不用 window.top.postMessage**：那条路任何页面脚本都能伪造（顶层无法区分
+   * 消息真的来自扩展还是来自页面），而磁力链接最终会被「打开」，不能让页面能往里塞。
+   * 走后台转发则 sender.frameId 由浏览器给出，页面伪造不了。 */
+  // 子 frame：把本次探测结果上报（内容没变就不重发，避免无限滚动时刷消息）
+  var lastFrameReport = '';
+  function reportFrameLinks(arr) {
+    if (IS_TOP) return;
+    var links = arr.map(function (d) { return { raw: d.raw, type: d.type }; });
+    var sig = links.map(function (x) { return x.type + '\u0000' + x.raw; }).join('\n');
+    if (sig === lastFrameReport) return;
+    lastFrameReport = sig;
+    try {
+      chrome.runtime.sendMessage({ type: 'sf_frame_probe', links: links, href: location.href });
+    } catch (e) { }
+  }
+
+  // 顶层 frame：收到后台转来的子 frame 上报
+  function applyFrameLinks(frameId, links) {
+    if (!IS_TOP) return;
+    frameLinks[String(frameId)] = links || [];
+    rebuildDlLinks();
+    renderStats();
+    if (ui && ui.panel && ui.panel.classList.contains('open')) renderList();
+  }
+
+  /* 顶层 frame 的「下载」列表 = 自己探到的 + 已上报的子 frame 链接。
+   * 重放而不是追加是刻意的：某个 iframe 导航走了之后，它的旧链接必须消失；
+   * 走同一套 pushLink ⇒ 跨 frame 的同一 infohash 自动归并（不会出现两条一样的种子）。 */
+  function rebuildDlLinks() {
+    var arr = [], seen = {};
+    var i;
+    for (i = 0; i < ownLinks.length; i++) {
+      var d = ownLinks[i];
+      pushLink(arr, seen, d.raw, d.type, d.el);   // 带上 el：角标与绿虚线还要用
+    }
+    Object.keys(frameLinks).forEach(function (fid) {
+      var ls = frameLinks[fid] || [];
+      for (var j = 0; j < ls.length; j++) pushLink(arr, seen, ls[j].raw, ls[j].type, null);
+    });
+    sortLinks(arr);
+    dlLinks = arr;
+    stats.dl = arr.length;
+  }
+
   function probeLinks() {
     var arr = [], seen = {};
     var st = S.settings;
-    if (st.probeLinks === false) { dlLinks = arr; stats.dl = 0; return; }
+    if (st.probeLinks === false) {
+      ownLinks = arr;
+      if (!IS_TOP) reportFrameLinks(arr);   // 关掉探测 → 让顶层把本 frame 的旧条目清掉
+      dlLinks = arr; stats.dl = 0; return;
+    }
     // 克隆卡片不参与链接探测：它们是「同一页之外」的内容，
     // 探测结果会混进「下载」页签，也会让 stats.dl 虚高。
     var scope = document.querySelectorAll('.cf-cloned');
@@ -3771,8 +3924,30 @@
     // L4 排序：按「信息完整度」分层，磁力优先（详见 sortLinks）
     sortLinks(arr);
 
-    dlLinks = arr;
-    stats.dl = arr.length;
+    ownLinks = arr;
+
+    /* 子 frame：不建面板、不应用规则、也不在 iframe 里画标记，只把结果上报给顶层 frame。
+     * 顶层拿到后并入自己的「下载」页签（跨 frame 同一 infohash 会归并成一条）。 */
+    if (!IS_TOP) {
+      dlLinks = arr;
+      stats.dl = arr.length;
+      reportFrameLinks(arr);
+      return;
+    }
+
+    // 顶层：自己探到的 + 已上报的子 frame 链接（子 frame 的没有 el，不参与页面标记）
+    rebuildDlLinks();
+
+    // 归属：按卡片归并（角标 / 卡片右键菜单）。只统计本 frame 探到的 ——
+    // 子 frame 的链接不在本文档里，没有卡片可归属。
+    var byCard = new Map();
+    for (var g = 0; g < arr.length; g++) {
+      var owner = arr[g].card;
+      if (!owner) continue;
+      if (!byCard.has(owner)) byCard.set(owner, []);
+      byCard.get(owner).push(arr[g]);
+    }
+    magnetByCard = byCard;
 
     // 页面内标记
     if (st.probeMark !== false && !st.boss) {
@@ -3781,6 +3956,8 @@
         if (el && !el.classList.contains('cf-dl')) el.classList.add('cf-dl');
       }
     }
+    // 角标跟着「标记链接」开关走；关掉时只摘不清数据（面板仍要能用）
+    markCardMagnets(st.probeMark !== false && !st.boss);
   }
 
   function copyText(t) {
@@ -4372,6 +4549,17 @@
         html += '<button data-cm="gosearch" data-v="' + escapeHtml(cs.tpl.replace('{q}', encodeURIComponent(code))) + '">在 ' + cs.n + ' 搜索</button>';
       });
     }
+    // 这张卡上的磁力（归属信息来自 probeLinks 的 magnetByCard）。
+    // 下载页签是整页扁平的 —— 一页几十张卡扫出几百条链接时，用户点这里才是
+    // 「就这张卡的磁力」这个准确范围，不用去扁平列表里认。
+    var myMags = magnetByCard.get(card) || [];
+    if (myMags.length) {
+      html += '<div class="sep"></div>';
+      html += '<button data-cm="copycardmagnet">复制这张卡的磁力（' + myMags.length + '）</button>';
+      if (S.settings.magnetAction !== 'copy') {
+        html += '<button data-cm="opencardmagnet">用下载工具打开这张卡的磁力（' + myMags.length + '）</button>';
+      }
+    }
     el.innerHTML = html;
     document.documentElement.appendChild(el);
 
@@ -4407,13 +4595,42 @@
         showShopPanel(v);
       } else if (cm === 'openall') {
         openAllSites(v);
+      } else if (cm === 'copycardmagnet' || cm === 'opencardmagnet') {
+        var mags = magnetByCard.get(card) || [];
+        if (!mags.length) { flashBall('这张卡上没有磁力'); return; }
+        if (cm === 'copycardmagnet') {
+          copyText(mags.map(function (d) { return d.raw; }).join('\n'));
+          flashBall('已复制 ' + mags.length + ' 条磁力');
+        } else {
+          mags.forEach(function (d) { openInClient(d.raw); });
+          flashBall('打开 ' + mags.length + ' 条磁力');
+        }
       }
     });
   }
 
   /* ---------------- 启动 ---------------- */
+  /* 子 frame 的极简启动：只探测 + 上报，绝不建 UI。
+   * 注意这里**不调 maybeAutoSeen()** —— 那会把「在自己站上浏览过」写进存储，
+   * 而 iframe 的内容未必是用户实际在看的（很多是隐藏广告位）。 */
+  function bootFrame() {
+    if (S.settings.probeLinks === false || S.settings.probeAnySite === false) return;
+    runPass();
+    observe();
+    chrome.storage.onChanged.addListener(function (changes, area) {
+      if (area !== 'local' || !changes[DATA_KEY]) return;
+      var d = changes[DATA_KEY].newValue || {};
+      S.settings = Object.assign({}, DEFAULT_SETTINGS, d.settings || {});
+      S.settings.probeAnySite = (d.settings && d.settings.probeAnySite) !== false;
+      S.settings.probeLinks = (d.settings && d.settings.probeLinks) !== false;
+      schedulePass();
+    });
+  }
+
   function boot() {
     loadState().then(function () {
+      // 子 frame：与顶层是两套启动路径（见 IS_TOP 的注释）
+      if (!IS_TOP) { bootFrame(); return; }
       currentSite = matchSite(location.href);
       maybeAutoSeen();
       probeMode = !currentSite;
@@ -4457,6 +4674,12 @@
       // 后台生成完今日推荐后刷新「📅 今日」页
       chrome.runtime.onMessage.addListener(function (msg) {
         if (!msg) return;
+        // 子 frame 探测到的链接（后台按 sender.frameId 转发到 frameId 0）——
+        // 这条来自后台，不能由页面脚本伪造，所以可以直接并入「下载」页签。
+        if (msg.type === 'sf_frame_probe') {
+          applyFrameLinks(msg.frameId, msg.links);
+          return;
+        }
         // 设置页改了「屏蔽后显示方式」：立刻套用，不必刷新页面。
         // 三档对应三组 class（.cf-blocked / .cf-placeholder / .cf-soft），
         // 直接改 settings 后走一趟完整 pass —— 旧的 class 由 clearMarks/resetPassMarks 负责摘掉。

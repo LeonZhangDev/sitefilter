@@ -596,13 +596,38 @@ setTimeout(() => {
               check('备份里没有的区块被标注「无法恢复」',
                 doc.querySelector('#partialBox').textContent.indexOf('无法恢复') !== -1);
 
+              /* ---- 干跑差异预览 ----
+                 回滚页此前只说「备份里有多少条」，那说的是**备份**，不是**后果**：
+                 replace 型区块会整体替换，当前有、备份里没有的条目会被静默丢掉。
+                 这里断言「恢复后会发生什么」被算出来并显示，且 merge 型不会被误标成会删。 */
+              check('回滚表有「恢复后（相对当前）」列',
+                doc.querySelector('#partialBox').textContent.indexOf('恢复后（相对当前）') !== -1);
+              const rowTxt = k => {
+                const cb = Array.prototype.find.call(secs, c => c.value === k);
+                const tr = cb && cb.closest ? cb.closest('tr') : null;
+                return tr ? tr.textContent : '';
+              };
+              const rulesRowTxt = rowTxt('rules');
+              check('干跑：规则库标出「+1 新增」', /\+\d+ 新增/.test(rulesRowTxt));
+              check('干跑：规则库标出会丢失 ' + rulesCountBefore + ' 条（replace 型整体替换，当前多出的会被丢掉）',
+                rulesRowTxt.indexOf('−' + rulesCountBefore + ' 条丢失') !== -1);
+              const favRowTxt = rowTxt('favCodes');
+              check('干跑：番号收藏是 merge 型，只增不删（不出现「丢失」字样）',
+                /\+\d+ 新增/.test(favRowTxt) && favRowTxt.indexOf('丢失') === -1);
+
               // 只勾「规则库」
               const rulesCb = Array.prototype.find.call(secs, c => c.value === 'rules');
               check('找到「规则库」勾选框', !!rulesCb);
               if (rulesCb) rulesCb.checked = true;
               const applyBtn = doc.querySelector('#prApply');
               check('有「恢复勾选的区块」按钮', !!applyBtn);
+              let confirmMsg = '';
+              win.confirm = msg => { confirmMsg = msg; return true; };
               if (applyBtn) applyBtn.click();
+              check('确认框带上了后果（区块名 + 会丢多少），而不只是区块名',
+                confirmMsg.indexOf('规则库') !== -1 && confirmMsg.indexOf('丢掉') !== -1);
+              check('确认框说明了未勾选区块不受影响',
+                confirmMsg.indexOf('未勾选的区块保持现状不变') !== -1);
 
               setTimeout(() => {
                 const rulesAfter = store.sf_data_v1.rules || [];
@@ -618,8 +643,7 @@ setTimeout(() => {
                 check('分项恢复：未勾选的分组原样未动',
                   !(store.sf_data_v1.groups || []).some(g => g && g.id === 'gb1'));
 
-                console.log(pass ? '\n设置页测试全部通过 ✅' : '\n存在失败 ❌');
-                process.exit(pass ? 0 : 1);
+                finishTests();
               }, 250);
             }, 150);
           }, 150);
@@ -628,3 +652,135 @@ setTimeout(() => {
     }, 220);
   }, 220);
 }, 300);
+
+/* =====================================================================
+ * C：规则命中时效画像（数据结构 v7）
+ *
+ * 为什么单独起一份设置页实例，而不是在上面那套夹具里加规则：
+ *   ① 上面的断言对「规则条数」敏感（有 4 条 / 7 条之类的硬编码），
+ *      往夹具里塞规则会连带改好几处无关断言；
+ *   ② options.js 首行是 'use strict' —— 经 win.eval 执行时，它的 var/function
+ *      只落在 **eval 自己的变量环境**里，不会挂到 window 上（严格模式 eval 的语义，
+ *      已实测确认）。所以拿不到 win.renderAudit()，调不了内部函数。
+ * 于是改为「按场景重建一份设置页，断言 renderAll 的产物」—— 反而更接近真实路径。
+ * ===================================================================== */
+function bootOptionsWithRules(rules) {
+  const st = {
+    sf_data_v1: Object.assign({}, store.sf_data_v1, { rules: JSON.parse(JSON.stringify(rules)) }),
+  };
+  const d = new JSDOM(html, {
+    url: 'chrome-extension://abc/options.html', runScripts: 'outside-only', pretendToBeVisual: true,
+  });
+  const w = d.window;
+  const get = (k, cb) => {
+    const o = {};
+    if (typeof k === 'string') o[k] = st[k]; else Object.keys(k).forEach(x => o[x] = st[x]);
+    cb(o);
+  };
+  const set = (o, cb) => { Object.assign(st, o); if (cb) cb(); };
+  w.chrome = {
+    storage: { local: { get, set }, sync: { get, set }, onChanged: { addListener() { } } },
+    runtime: { sendMessage() { }, openOptionsPage() { }, onMessage: { addListener() { } } },
+  };
+  w.alert = function () { };
+  w.confirm = function () { return true; };
+  w.prompt = function () { return ''; };
+  w.URL.createObjectURL = function () { return 'blob:x'; };
+  w.URL.revokeObjectURL = function () { };
+  // options.js 里 <a download> 的静音与主夹具同理
+  w.HTMLAnchorElement.prototype.click = function () { };
+  w.eval(fs.readFileSync(path.join(EXT, 'site-templates.js'), 'utf8'));
+  w.eval(fs.readFileSync(path.join(EXT, 'expr.js'), 'utf8'));
+  w.eval(fs.readFileSync(path.join(EXT, 'rulecheck.js'), 'utf8'));
+  w.eval(js);
+  return w;
+}
+
+function finishTests() {
+  // 与 todayStr() / statsLog 同一口径：月、日不补零
+  const dk = off => {
+    const d = new Date(Date.now() - off * 864e5);
+    return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+  };
+  const base = {
+    type: 'actress', action: 'block', match: 'contains', scope: 'actress',
+    color: '', sites: [], enabled: true, expr: '', expiresAt: 0,
+    createdAt: now - 200 * 864e5,
+  };
+  const rules = [
+    // ④ 近期失效：**曾经命中过**（hits>0），但分桶里只有 45 天前的记录 → 近 30 天 0
+    Object.assign({}, base, {
+      id: 'cStale', value: '改版后失效的女优', hits: 12,
+      lastHit: Date.now() - 45 * 864e5, hitDays: { [dk(45)]: 8 },
+    }),
+    // 窗口判据的另一侧：也有 50 天前的桶（窗口外）、但 20 天前有命中（窗口内）→ 不算失效
+    Object.assign({}, base, {
+      id: 'cAlive', value: '有点冷但还在命中的女优', hits: 40,
+      lastHit: Date.now() - 20 * 864e5, hitDays: { [dk(50)]: 30, [dk(20)]: 2 },
+    }),
+    // 升级前的老数据：有 hits 有 lastHit，但**没有分桶** → 绝不能被报成失效
+    Object.assign({}, base, {
+      id: 'cLegacy', value: '升级前的老规则', hits: 20, lastHit: Date.now() - 90 * 864e5,
+    }),
+    // 规则表：近期活跃 → 命中列显示「近 30 天 3」
+    Object.assign({}, base, {
+      id: 'cFresh', value: '近期活跃的女优', hits: 3,
+      lastHit: Date.now() - 3600e3, hitDays: { [dk(0)]: 3 },
+    }),
+  ];
+
+  const w = bootOptionsWithRules(rules);
+  setTimeout(() => {
+    const doc = w.document;
+    const audit = doc.querySelector('#auditBox').textContent;
+    const auditCnt = doc.querySelector('#auditCount').textContent;
+
+    check('[C][体检] 统计文案出现「近期失效」', auditCnt.indexOf('近期失效') !== -1);
+    check('[C][体检] 「曾经命中、近 30 天断档」的规则被列出', audit.indexOf('改版后失效的女优') !== -1);
+    check('[C][体检] 提示要先去核对站点、别急着删（不是直接删掉）', audit.indexOf('站点改版') !== -1);
+    check('[C][体检] 失效规则不进「从未命中」那类（两类互斥）',
+      doc.querySelector('#auditBox tr[data-audit="cStale"]') === null);
+    // —— 窗口判据两侧 ——
+    check('[C][体检] 30 天窗口：45 天前的桶不算命中 → 判为失效', audit.indexOf('改版后失效的女优') !== -1);
+    check('[C][体检] 30 天窗口：20 天前有命中 → 不判失效', audit.indexOf('有点冷但还在命中的女优') === -1);
+    // —— 老数据回归（最关键）——
+    check('[C][回归] 无分桶数据的老规则不被误报为「近期失效」', audit.indexOf('升级前的老规则') === -1);
+    check('[C][回归] 老规则也不进「从未命中」类（它有 hits，不该被一刀切）',
+      doc.querySelector('#auditBox tr[data-audit="cLegacy"]') === null);
+
+    const rt = doc.querySelector('#ruleTable').textContent;
+    check('[C] 规则表命中列出现「近 30 天」', rt.indexOf('近 30 天') !== -1);
+    check('[C] 「近 30 天」显示的是窗口内增量（cFresh = 3）', /近 30 天\s*3/.test(rt));
+    check('[C] 近期为 0 的规则照常显示「近 30 天 0」（0 是有信息的，不该省略）',
+      /近 30 天\s*0/.test(rt));
+    const legacyRow = doc.querySelector('#ruleTable tr[data-id="cLegacy"]');
+    check('[C] 无分桶数据的老规则那一行不显示「近 30 天」（null 不渲染成 0）',
+      !!legacyRow && legacyRow.textContent.indexOf('近 30 天') === -1);
+
+    // 月度回顾：有分桶 → 走精确路径（本月增量），不再拿累计值冒充
+    const month = doc.querySelector('#monthBox').textContent;
+    check('[C][月度] 有分桶时表头用「本月命中」', month.indexOf('本月命中') !== -1);
+    check('[C][月度] 有分桶时不再显示「累计命中」冒充月增量', month.indexOf('累计命中') === -1);
+    check('[C][月度] 说明里写明是精确的本月增量', month.indexOf('精确值') !== -1);
+
+    // 老数据（无分桶）→ 退回近似路径，并**明确标注是近似**
+    const wOld = bootOptionsWithRules([
+      Object.assign({}, base, { id: 'oL1', value: '老规则甲', hits: 5, lastHit: Date.now() - 3600e3 }),
+      Object.assign({}, base, { id: 'oL2', value: '老规则乙', hits: 9, lastHit: Date.now() - 7200e3 }),
+    ]);
+    setTimeout(() => {
+      const doc2 = wOld.document;
+      const month2 = doc2.querySelector('#monthBox').textContent;
+      check('[C][月度][回归] 无分桶时退回近似路径（表头标「近似」）', month2.indexOf('（近似）') !== -1);
+      check('[C][月度][回归] 近似路径下用「累计命中」并说明原因', month2.indexOf('累计命中') !== -1);
+      check('[C][月度][回归] 老数据不显示「近 30 天」（无数据 ≠ 0）',
+        doc2.querySelector('#ruleTable').textContent.indexOf('近 30 天') === -1);
+      check('[C][体检][回归] 老数据不会被报成「近期失效」',
+        doc2.querySelector('#auditCount').textContent.indexOf('近期失效') === -1);
+
+      console.log(pass ? '\n设置页测试全部通过 ✅' : '\n存在失败 ❌');
+      process.exit(pass ? 0 : 1);
+    }, 300);
+  }, 300);
+}
+

@@ -1,8 +1,10 @@
 name: CI
 
 # 每次推送 / PR 都跑一遍完整门禁：
-#   ① JS 语法检查  ② 全部测试套件（22 套，JS + Python）  ③ manifest 校验 + 试打包
+#   ① JS 语法检查  ② 全部测试套件（JS + Python）  ③ manifest 校验 + 试打包
 # 只要有任何失败，这个 workflow 变红 —— 门禁与本地 `python ci.py` 是同一份逻辑。
+# 套数**不写在这里**：它会随新增套件变化，写死必过期（README 里的「N 套」由
+# `_test_docs.js` 守着，这里没必要再抄一份 —— 抄了也没人守）。
 
 on:
   push:

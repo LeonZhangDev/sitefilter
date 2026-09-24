@@ -11,7 +11,7 @@ if (typeof importScripts === 'function') {
 }
 
 var DATA_KEY = 'sf_data_v1';
-var SCHEMA_VERSION = 6;   // 与 content.js / options.js 保持一致
+var SCHEMA_VERSION = 7;   // 与 content.js / options.js 保持一致
 
 /* ---------------- 本地错误日志（与 content.js 共用同一份 errLog） ---------------- */
 var ERR_MAX = 200;
@@ -143,6 +143,15 @@ function migrate(d) {
         x.settings.blockDisplay = x.settings.softBlock ? 'soft' : 'hide';
       }
       delete x.settings.softBlock;
+    },
+    // v6 → v7：规则命中按天分桶（rule.hitDays），供「时效画像」用。
+    // 与 content.js 的 step 7 必须完全一致。**不回填历史**（累计 hits 反推不出
+    // 每天几次，摊平就是编数据），只保证字段存在 = 「从本版起开始记录」。
+    7: function (x) {
+      x.rules = (x.rules || []).map(function (r) {
+        if (r && (!r.hitDays || typeof r.hitDays !== 'object' || Array.isArray(r.hitDays))) r.hitDays = {};
+        return r;
+      });
     }
   };
   for (var v = from + 1; v <= SCHEMA_VERSION; v++) {
@@ -258,7 +267,7 @@ chrome.contextMenus.onClicked.addListener(function (info, tab) {
         color: d.settings.hlColor || '#00e5ff',
         sites: [],
         enabled: true,
-        hits: 0
+        hits: 0, hitDays: {}
       });
     }
     setData(d);
@@ -730,6 +739,22 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
       sendResponse({ ok: false, error: { code: e.code || 'magnet-bridge-error', message: e.message || '本机下载器桥失败。', retriable: !!e.retriable } });
     });
     return true;
+  }
+  // 子 frame 探测到的链接 → 转给本标签页的**顶层 frame**（frameId 0）汇总展示。
+  // 两张表的来历不同：msg.links 由子 frame 给出，frameId 则**必须**取 sender.frameId
+  // （浏览器给的），不能信 msg 里的自述 —— 否则任何 frame 都能冒充别的 frame。
+  if (msg.type === 'sf_frame_probe' && sender && sender.tab &&
+      typeof sender.frameId === 'number' && sender.frameId !== 0) {
+    var links = (Array.isArray(msg.links) ? msg.links : []).filter(function (x) {
+      return x && typeof x.raw === 'string' && typeof x.type === 'string';
+    });
+    try {
+      var p = chrome.tabs.sendMessage(sender.tab.id, {
+        type: 'sf_frame_probe', frameId: sender.frameId, links: links
+      }, { frameId: 0 });
+      if (p && p.catch) p.catch(function () { });   // 顶层还没注入时静默（正常现象）
+    } catch (e) { }
+    return;
   }
   try { handleMsg(msg); } catch (e) { logErr('onMessage:' + (msg && msg.type), e); }
 });

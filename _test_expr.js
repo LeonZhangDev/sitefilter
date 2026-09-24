@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 
-const EXT = 'C:\\Users\\admin\\Desktop\\site-filter';
+const EXT = __dirname;
 const code = fs.readFileSync(path.join(EXT, 'content.js'), 'utf8');   // 只读 content.js：源码守卫断言不该被别的文件蒙对
 const E = require(path.join(EXT, 'expr.js'));
 // bundle 含 expr.js：与浏览器一致，整包注入

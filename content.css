@@ -163,6 +163,29 @@ html.cf-reveal .cf-blocked {
   background: rgba(34, 197, 94, 0.1) !important;
 }
 
+/* 卡片上的磁力归属角标：这张卡有几条磁力（右上角）。
+ * 计数从 data-cf-mg 属性取（attr()），JS 只加 class + data-*，**不插 DOM 节点** ——
+ * 往页面里 insert 节点会触发扩展自己的 MutationObserver，等于每轮 pass 自激一次。
+ * 与左下角的 ♥（.cf-favcode）和左上角的收藏按钮（.cf-favbtn）错开，互不遮挡。 */
+.cf-hasmagnet::after {
+  content: "磁 ×" attr(data-cf-mg);
+  position: absolute !important;
+  top: 4px;
+  right: 4px;
+  z-index: 2147483000 !important;
+  padding: 0 6px;
+  height: 18px;
+  line-height: 18px;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif !important;
+  font-size: 11px !important;
+  white-space: nowrap;
+  color: #fff;
+  background: rgba(16, 185, 129, 0.92);
+  border-radius: 9px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  pointer-events: none !important;
+}
+
 /* 老板键：瞬间恢复原样（清掉所有标记类由 JS 完成，这里兜底） */
 html.cf-boss .cf-host {
   display: none !important;

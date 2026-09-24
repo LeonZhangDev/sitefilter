@@ -215,6 +215,10 @@ def syntax_check(quiet=False):
     return (not bad), bad
 
 
+# 套件崩溃时回显末尾多少行输出。定成常量是为了让「崩溃不留线索」这件事可被断言。
+CRASH_TAIL_LINES = 12
+
+
 def run_tests(quiet=False):
     """跑全部测试套件。返回 (ok, 明细字符串列表, 汇总 dict)。"""
     node = find_node()
@@ -225,41 +229,63 @@ def run_tests(quiet=False):
     if not suites:
         return False, ['没找到任何测试套件（_smoke.js / _test_*.js）'], {}
 
-    lines, npass, nfail, failed = [], 0, 0, []
+    lines, failed, crashed = [], [], []
+    npass, nfail = 0, 0
+
+    def record(name, code, out):
+        """把一个套件的结果记进汇总（JS / Python 共用同一口径）。
+
+        三种结局必须都能从输出里分辨出来，尤其是第三种 —— 它以前不留任何线索：
+          ✅ 全过（exit 0，FAIL 0）
+          ❌ 断言失败（有 FAIL 行）
+          💥 崩了（exit != 0 且**一行 FAIL 都没有**：抛异常、找不到文件、语法错）
+        崩了的时候以前只在「失败>0」才收集明细，可崩溃时根本没有 FAIL 行，
+        于是 CI 日志里只剩「❌ 通过 0 失败 0」，得把套件单独跑一遍才知道为什么。
+        那次三个套件硬编码了开发机绝对路径，在 Linux runner 上 ENOENT 直接死 ——
+        结论明明在 stderr 里，却被门禁自己吞掉了。
+        """
+        nonlocal npass, nfail
+        p = len(re.findall(r'^PASS', out, re.M))
+        f = len(re.findall(r'^FAIL', out, re.M))
+        npass += p
+        nfail += f
+        is_crash = (code != 0 and f == 0)
+        ok = (code == 0 and f == 0)
+        lines.append('  %-26s %s  通过 %3d  失败 %d%s' % (
+            name, '✅' if ok else ('💥' if is_crash else '❌'), p, f,
+            '   exit=%d' % code if is_crash else ''))
+        if ok:
+            return
+        failed.append(name)
+        for ln in out.splitlines():
+            if ln.startswith('FAIL'):
+                lines.append('        ' + ln)
+        if is_crash:
+            crashed.append(name)
+            body = [l for l in out.rstrip().splitlines() if l.strip()]
+            lines.append('        ↑ 一条断言都没跑完（exit %d），末尾 %d 行输出：'
+                         % (code, min(CRASH_TAIL_LINES, len(body))))
+            for ln in body[-CRASH_TAIL_LINES:]:
+                lines.append('        | ' + ln[:220])
+
     jobs = [(s, [node, s], env) for s in suites]
     for s, argv, e in jobs:
         code, out = run(argv, env=e)
-        p = len(re.findall(r'^PASS', out, re.M))
-        f = len(re.findall(r'^FAIL', out, re.M))
-        npass += p
-        nfail += f
-        ok = (code == 0 and f == 0)
-        lines.append('  %-26s %s  通过 %3d  失败 %d' % (s, '✅' if ok else '❌', p, f))
-        if not ok:
-            failed.append(s)
-            for ln in out.splitlines():
-                if ln.startswith('FAIL'):
-                    lines.append('        ' + ln)
+        record(s, code, out)
     # Python 套件（native host 等）走同一个计数口径
     for s in py_test_suites():
         code, out = run([sys.executable, s])
-        p = len(re.findall(r'^PASS', out, re.M))
-        f = len(re.findall(r'^FAIL', out, re.M))
-        npass += p
-        nfail += f
-        ok = (code == 0 and f == 0)
-        lines.append('  %-26s %s  通过 %3d  失败 %d' % (s, '✅' if ok else '❌', p, f))
-        if not ok:
-            failed.append(s)
-            for ln in out.splitlines():
-                if ln.startswith('FAIL'):
-                    lines.append('        ' + ln)
+        record(s, code, out)
+
     total_suites = len(jobs) + len(py_test_suites())
     log('\n测试套件：', quiet)
     for ln in lines:
         log(ln, quiet)
+    if crashed:
+        log('\n注意：有 %d 个套件是「崩溃」而不是「断言失败」—— 上面已附它们的末尾输出。'
+            % len(crashed), quiet)
     summary = {'suites': total_suites, 'passed': npass, 'failed': nfail,
-               'failedSuites': failed}
+               'failedSuites': failed, 'crashedSuites': crashed}
     return (not failed), failed, summary
 
 

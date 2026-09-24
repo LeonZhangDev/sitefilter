@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 
-const EXT = 'C:\\Users\\admin\\Desktop\\site-filter';
+const EXT = __dirname;
 const code = require('./_load').contentBundle();
 
 function card(code_, star, genre, maker, series) {

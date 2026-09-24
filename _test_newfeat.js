@@ -12,7 +12,7 @@ const path = require('path');
 const { JSDOM } = require('jsdom');
 const vm = require('vm');
 
-const EXT = 'C:\\Users\\admin\\Desktop\\site-filter';
+const EXT = __dirname;
 const code = require('./_load').contentBundle();
 
 let pass = true;

@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 
-const EXT = 'C:\\Users\\admin\\Desktop\\site-filter';
+const EXT = __dirname;
 const code = require('./_load').contentBundle();
 
 /* 每张卡片可带评分/日期；用 item 的 class 标出评分与日期元素 */

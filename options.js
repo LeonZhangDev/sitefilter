@@ -1,6 +1,6 @@
 'use strict';
 var DATA_KEY = 'sf_data_v1';
-var SCHEMA_VERSION = 6;   // 与 content.js / background.js 保持一致
+var SCHEMA_VERSION = 7;   // 与 content.js / background.js 保持一致
 
 /* ---------------- 错误日志（与 content/background 共用同一份 errLog） ---------------- */
 var ERR_MAX = 200;
@@ -138,6 +138,15 @@ function migrate(d) {
         x.settings.blockDisplay = x.settings.softBlock ? 'soft' : 'hide';
       }
       delete x.settings.softBlock;
+    },
+    // v6 → v7：规则命中按天分桶（rule.hitDays），供「时效画像」用。
+    // 必须与 content.js / background.js 的 step 7 逐字一致。**不回填历史** ——
+    // 累计 hits 反推不出每天各几次，摊平就是编数据；空对象 = 「从本版起开始记录」。
+    7: function (x) {
+      x.rules = (x.rules || []).map(function (r) {
+        if (r && (!r.hitDays || typeof r.hitDays !== 'object' || Array.isArray(r.hitDays))) r.hitDays = {};
+        return r;
+      });
     }
   };
   for (var v = from + 1; v <= SCHEMA_VERSION; v++) {
@@ -265,7 +274,7 @@ function renderRules() {
     '<th style="width:26px" title="拖动排序">⠿</th>' +
     '<th style="width:40px">启用</th><th style="width:70px">类型</th><th>名称</th>' +
     '<th style="width:96px">动作</th><th style="width:74px">匹配</th><th style="width:100px">作用范围</th>' +
-    '<th style="width:60px">颜色</th><th style="width:74px">有效期</th><th style="width:46px">命中</th><th style="width:132px">操作</th>' +
+    '<th style="width:60px">颜色</th><th style="width:74px">有效期</th><th style="width:74px">命中</th><th style="width:132px">操作</th>' +
     '</tr></thead><tbody>';
 
   list.forEach(function (r) {
@@ -277,6 +286,9 @@ function renderRules() {
     if (r.dateTo) condChips += '<span class="chip" style="background:rgba(0,229,255,.16);color:#8beeff">至 ' + esc(r.dateTo) + '</span> ';
     var isTemp = !!(r.expiresAt && Number(r.expiresAt) > 0);
     var tempDead = isTemp && Date.now() >= Number(r.expiresAt);
+    // 近 30 天命中（v7 起按天分桶才有的数据）。null = 没数据，不显示；
+    // 0 是有意义的（说明这条规则近期确实没命中过），照常显示。
+    var rec30 = recentHits(r, 30);
     html += '<tr class="' + (r.enabled ? '' : 'off') + '" data-id="' + r.id + '"' + (canDrag ? ' draggable="true"' : '') + '>' +
       '<td class="dgh" title="拖动排序">⠿</td>' +
       '<td><input type="checkbox" data-f="enabled" ' + (r.enabled ? 'checked' : '') + '></td>' +
@@ -304,7 +316,8 @@ function renderRules() {
         ? '<span class="chip" style="background:' + (tempDead ? 'rgba(255,77,109,.2);color:#ffb3c1' : 'rgba(255,159,28,.18);color:#ffd08a') + '" title="' +
           esc(new Date(r.expiresAt).toLocaleString('zh-CN')) + '">' + (tempDead ? '已过期' : fmtLeft(r.expiresAt)) + '</span>'
         : '<span class="alias">永久</span>') + '</td>' +
-      '<td>' + (r.hits || 0) + (r.lastHit ? '<br><span class="alias" title="' + esc(new Date(r.lastHit).toLocaleString('zh-CN')) + '">' + esc(relTime(r.lastHit)) + '</span>' : '') + '</td>' +
+      '<td>' + (r.hits || 0) + (r.lastHit ? '<br><span class="alias" title="' + esc(new Date(r.lastHit).toLocaleString('zh-CN')) + '">' + esc(relTime(r.lastHit)) + '</span>' : '') +
+      (rec30 === null ? '' : '<br><span class="alias" title="按天分桶统计（v7 起记录）">近 30 天 ' + rec30 + '</span>') + '</td>' +
       '<td><button class="mini" data-act="up" title="上移（提高优先级）">↑</button>' +
       '<button class="mini" data-act="down" title="下移（降低优先级）">↓</button> ' +
       '<button class="mini" data-act="edit">✎</button> <button class="mini danger" data-act="del">删除</button></td>' +
@@ -448,6 +461,48 @@ function relTime(ts) {
   if (s < 86400 * 30) return Math.floor(s / 86400) + ' 天前';
   return new Date(ts).toLocaleDateString('zh-CN');
 }
+
+/* ---------------- 规则命中时效画像（数据结构 v7 起） ----------------
+ * rule.hitDays 的形状：{ 'YYYY-M-D': n }，与 todayStr() / statsLog 同一口径
+ * （月、日**不补零**）⇒ 不能按字典序排序，要比就解析成时间戳比。
+ *
+ * 关键语义：**没有分桶数据 ≠ 从未命中**。v6 及以前只记累计 hits + 最后一次 lastHit，
+ * 迁移只补空对象、**不回填历史**（累计数反推不出每天几次，摊平就是编数据）。
+ * 所以下面一律用 null 表示「无数据」，0 表示「有数据且这段时间确实是 0」——
+ * UI 必须把两者分开说，否则会把一条正常规则误报成「已失效」。
+ * ------------------------------------------------------------------ */
+function hitDayNum(k) {
+  var p = String(k).split('-');
+  return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])).getTime();
+}
+// 近 days 天的命中数；无分桶数据返回 null（不是 0）
+function recentHits(r, days) {
+  var hd = (r && r.hitDays) || null;
+  if (!hd || typeof hd !== 'object') return null;
+  var keys = Object.keys(hd);
+  if (!keys.length) return null;
+  var from = Date.now() - days * 864e5, n = 0;
+  keys.forEach(function (k) { if (hitDayNum(k) >= from) n += Number(hd[k]) || 0; });
+  return n;
+}
+// 某个月（'YYYY-M'，同 monthKeyOf）的命中数；无分桶数据返回 null
+function monthHits(r, mk) {
+  var hd = (r && r.hitDays) || null;
+  if (!hd || typeof hd !== 'object') return null;
+  var keys = Object.keys(hd);
+  if (!keys.length) return null;
+  var n = 0;
+  keys.forEach(function (k) {
+    var p = String(k).split('-');
+    if (p[0] + '-' + p[1] === String(mk)) n += Number(hd[k]) || 0;
+  });
+  return n;
+}
+function anyHitDays(rules) {
+  return (rules || []).some(function (r) {
+    return r && r.hitDays && typeof r.hitDays === 'object' && Object.keys(r.hitDays).length > 0;
+  });
+}
 // 剩余有效期：到期时间 → 「3 天」「5 小时」这种短标签
 function fmtLeft(ts) {
   var left = Number(ts) - Date.now();
@@ -487,7 +542,7 @@ document.getElementById('bulkAdd').addEventListener('click', function () {
     else {
       D.rules.push({
         id: uid(), type: type, value: value, aliases: aliases, action: action,
-        match: 'contains', scope: scope, color: color, sites: [], enabled: true, hits: 0, createdAt: Date.now()
+        match: 'contains', scope: scope, color: color, sites: [], enabled: true, hits: 0, hitDays: {}, createdAt: Date.now()
       });
     }
     n++;
@@ -1077,7 +1132,7 @@ function addDiscRule(value, type, action) {
   else {
     D.rules.push({
       id: uid(), type: type, value: value, aliases: [], action: action,
-      match: 'contains', scope: scope, color: D.settings.hlColor, sites: [], enabled: true, hits: 0, createdAt: Date.now()
+      match: 'contains', scope: scope, color: D.settings.hlColor, sites: [], enabled: true, hits: 0, hitDays: {}, createdAt: Date.now()
     });
   }
   save().then(function () { renderDisc(); renderRules(); });
@@ -1819,7 +1874,7 @@ if (_packSel) {
       D.rules.push({
         id: uid(), type: t.type, value: t.value || '', aliases: [],
         action: t.action, match: 'contains', scope: SCOPE_OF[t.type] || 'all',
-        color: D.settings.hlColor, sites: [], enabled: true, hits: 0, createdAt: Date.now(),
+        color: D.settings.hlColor, sites: [], enabled: true, hits: 0, hitDays: {}, createdAt: Date.now(),
         ratingMin: t.ratingMin == null ? '' : t.ratingMin,
         dateFrom: t.dateFrom || '', dateTo: t.dateTo || '',
         expr: t.expr || ''
@@ -1951,6 +2006,7 @@ var RESTORE_SECTIONS = [
 ];
 
 var partialData = null;   // 已解析的备份对象
+var partialDiff = {};     // 区块键 → 差异（干跑结果，confirm 文案要用）
 
 function applyRestoreSection(sec, backup, target) {
   var inc = backup[sec.key];
@@ -1963,6 +2019,57 @@ function applyRestoreSection(sec, backup, target) {
     target[sec.key] = (target[sec.key] || []).concat(JSON.parse(JSON.stringify(inc)));
   }
   return true;
+}
+
+/* ---- 区块差异预览（干跑 dry-run） ----
+ * 回滚是这个设置页里**唯一「点错就没救」**的操作：replace 型区块会整体替换，
+ * 当前有、备份里没有的条目会被静默丢掉（用户眼里就是"我新攒的东西没了"）。
+ * 此前页面只告诉用户「备份里有多少条」，那说的是**备份**，不是**后果** ——
+ * 两边差多少、会丢多少，一个字都没有。
+ *
+ * 这里只算、不改，纯本地比较（不动 schema、不写 storage）：
+ *   add    备份里有、当前没有      → 会新增
+ *   change 两边都有但内容不同      → 会被覆盖
+ *   drop   replace 型专属：当前有、备份里没有 → **会被丢掉**（最该被看见的一项）
+ * merge 型只增不删，drop 恒为 0。
+ */
+function sectionDiff(sec, inc, cur) {
+  if (inc == null) return null;
+  var isArr = Array.isArray(inc);
+  var index = function (v) {
+    var m = {};
+    if (isArr) {
+      (Array.isArray(v) ? v : []).forEach(function (it, i) {
+        // 有 id/code/name 的按它对齐（同一部片、同一条规则），否则退化成下标
+        var k = (it && (it.id || it.code || it.name)) || ('#' + i);
+        m[k] = it;
+      });
+    } else {
+      Object.keys(v || {}).forEach(function (k) { m[k] = v[k]; });
+    }
+    return m;
+  };
+  var a = index(inc), b = index(cur);
+  var d = { add: 0, change: 0, same: 0, drop: 0, unit: isArr ? '条' : '个键', replace: sec.kind === 'replace' };
+  Object.keys(a).forEach(function (k) {
+    if (!(k in b)) { d.add++; return; }
+    if (JSON.stringify(a[k]) === JSON.stringify(b[k])) d.same++; else d.change++;
+  });
+  if (d.replace) Object.keys(b).forEach(function (k) { if (!(k in a)) d.drop++; });
+  return d;
+}
+
+function diffHtml(d) {
+  if (!d) return '<span class="alias">—</span>';
+  if (!d.add && !d.change && !d.drop) return '<span class="alias" style="color:#7ee2a8">与当前一致</span>';
+  var s = [];
+  if (d.add) s.push('+' + d.add + ' 新增');
+  if (d.change) s.push('~' + d.change + ' 覆盖');
+  var out = '<span class="alias">' + esc(s.join(' · ') || '无新增') + '</span>';
+  if (d.drop) {
+    out += ' <span style="color:#ffb3c1">−' + d.drop + ' ' + d.unit + '丢失</span>';
+  }
+  return out;
 }
 
 function renderPartial() {
@@ -1986,13 +2093,18 @@ function renderPartial() {
     '</b>（当前 v' + SCHEMA_VERSION + '）' +
     (bsv && Number(bsv) > SCHEMA_VERSION ? ' —— <span style="color:#ffb3c1">来自更高版本，恢复后可能有不兼容字段</span>' : '') +
     '</div>';
-  html += '<table><thead><tr><th style="width:30px"></th><th style="width:110px">区块</th>' +
-    '<th style="width:190px">备份里有多少</th><th>说明</th></tr></thead><tbody>';
+  html += '<table><thead><tr><th style="width:30px"></th><th style="width:100px">区块</th>' +
+    '<th style="width:130px">备份里有多少</th><th style="width:170px">恢复后（相对当前）</th>' +
+    '<th>说明</th></tr></thead><tbody>';
+  partialDiff = {};
   avail.forEach(function (s) {
     var v = partialData[s.key];
     var cnt = Array.isArray(v) ? (v.length + ' 条') : (typeof v === 'object' ? (Object.keys(v).length + ' 个键') : '—');
+    var d = sectionDiff(s, v, D[s.key]);
+    partialDiff[s.key] = d;
     html += '<tr><td><input type="checkbox" class="prSec" value="' + esc(s.key) + '"></td>' +
       '<td><b>' + esc(s.label) + '</b></td><td><span class="alias">' + esc(cnt) + '</span></td>' +
+      '<td>' + diffHtml(d) + '</td>' +
       '<td><span class="alias">' + esc(s.desc) + '</span></td></tr>';
   });
   html += '</tbody></table>';
@@ -2020,11 +2132,29 @@ function renderPartial() {
     var picked = Array.prototype.filter.call(box.querySelectorAll('.prSec'), function (c) { return c.checked; })
       .map(function (c) { return c.value; });
     if (!picked.length) { alert('先勾选要恢复的区块。'); return; }
+    // 确认框里带上**后果**，而不只是区块名：丢失/覆盖是这一步唯一不可逆的部分，
+    // 用户在点「确定」之前就该看到数字（页面上的干跑结果也同步显示）。
     var labels = picked.map(function (k) {
       var s = RESTORE_SECTIONS.filter(function (x) { return x.key === k; })[0];
-      return s ? s.label : k;
+      var nm = s ? s.label : k;
+      var d = partialDiff[k];
+      if (!d) return nm;
+      var bits = [];
+      if (d.add) bits.push('+' + d.add + ' 新增');
+      if (d.change) bits.push('~' + d.change + ' 覆盖');
+      if (d.drop) bits.push('−' + d.drop + ' ' + d.unit + '丢失');
+      return nm + '（' + (bits.join(' · ') || '与当前一致') + '）';
     });
-    if (!confirm('将从备份恢复以下区块：\n\n  ' + labels.join('、') +
+    var sum = function (f) {
+      return picked.reduce(function (n, k) { return n + ((partialDiff[k] && f(partialDiff[k])) || 0); }, 0);
+    };
+    var lost = sum(function (d) { return d.drop; });
+    var chg = sum(function (d) { return d.change; });
+    var warn = '';
+    if (lost) warn += '\n\n⚠ 有 ' + lost + ' 项当前数据在备份里不存在 —— 恢复后会被丢掉。';
+    if (chg) warn += '\n⚠ 有 ' + chg + ' 项内容会被备份里的版本覆盖。';
+    if (!lost && !chg) warn = '\n\n（选中区块与当前数据一致，恢复等于什么都没改。）';
+    if (!confirm('将从备份恢复以下区块：\n\n  ' + labels.join('\n  ') + warn +
       '\n\n未勾选的区块保持现状不变。\n恢复前会自动先导出当前状态作为保险。\n\n确定继续？')) return;
 
     // 保险：先把当前全量导出（复用导出按钮的路径，但不弹加密询问）
@@ -2042,7 +2172,10 @@ function renderPartial() {
       renderAll();
       var tip = document.getElementById('partialName');
       if (tip) tip.textContent = '已恢复 ' + n + ' 个区块';
-      alert('恢复完成：' + labels.join('、') + '\n\n（已自动导出一份恢复前的完整备份）');
+      alert('恢复完成：' + picked.map(function (k) {
+        var s = RESTORE_SECTIONS.filter(function (x) { return x.key === k; })[0];
+        return s ? s.label : k;
+      }).join('、') + '\n\n（已自动导出一份恢复前的完整备份）');
     });
   });
 }
@@ -2330,7 +2463,7 @@ function addRuleFromExpr() {
   D.rules.unshift({
     id: uid(), type: 'expr', value: src.length > 40 ? (src.slice(0, 40) + '…') : src,
     expr: src, aliases: [], action: act, match: 'contains', scope: 'all',
-    color: D.settings.hlColor || '#00e5ff', sites: [], enabled: true, hits: 0,
+    color: D.settings.hlColor || '#00e5ff', sites: [], enabled: true, hits: 0, hitDays: {},
     createdAt: Date.now(), ratingMin: '', dateFrom: '', dateTo: ''
   });
   save().then(function () {
@@ -2361,7 +2494,13 @@ function addRuleFromExpr() {
 
 /* =====================================================================
  * 规则体检：把"为什么这条规则一直不生效"和"这条规则是不是太宽了"讲清楚
- * 与「死规则清理」的区别：那个只按 0 命中一刀切，这个给原因、给建议。
+ * 四类问题：
+ *   ① 疑似无效 —— 启用 >7 天却 0 命中
+ *   ② 可能过宽 —— 屏蔽规则在发现库里命中面 >70%
+ *   ③ 样本集从未命中 —— 发现库有同类实体却完全匹配不到（写法/作用域/别名问题）
+ *   ④ 近期失效（v7 起可判）—— 曾经命中过、近 30 天 0 命中（站点改版）
+ * 与「死规则清理」的区别：那个只按 0 命中一刀切，这个给原因、给建议，且区分
+ * 「从来没生效过」与「原本有用、现在坏了」—— 后者的正确处置是核对站点，不是删。
  * ===================================================================== */
 function explainZeroHit(r) {
   var why = [];
@@ -2452,15 +2591,32 @@ function renderAudit() {
       if (!hit) corpusDead.push(r);
     });
   }
-  var totalIssue = zero.length + wide.length + corpusDead.length;
+  // ④ 近期失效（v7 起可判）：**曾经命中过**，但近 30 天 0 命中 —— 多半是站点改版、
+  //    卡片结构变了、或内容下架，规则本身没写错但不再生效。
+  //    与 ① 的区别很关键：① 是「从来没起作用过」（可能只是题材冷门，删了不亏）；
+  //    ④ 是「原本有用、现在坏了」—— **删掉等于丢功能**，该做的是去核对站点。
+  //    判据必须要求**确实有分桶数据**（recentHits 返回 0，不是 null），
+  //    否则 v6 及以前的老数据（无分桶）会被整体误报成「失效」。
+  var stale = [];
+  rules.forEach(function (r) {
+    if (r.enabled === false) return;
+    if ((r.hits || 0) <= 0) return;                            // 从未命中 → 归 ① / ③
+    var rec = recentHits(r, 30);
+    if (rec !== 0) return;                                     // null=无分桶数据，>0=近期仍在命中
+    if (r.lastHit && (now - r.lastHit) <= 30 * 864e5) return;  // 与分桶自相矛盾 → 保守放过
+    stale.push(r);
+  });
+  var totalIssue = zero.length + wide.length + corpusDead.length + stale.length;
   if (cnt) {
     cnt.textContent = totalIssue
-      ? ('发现 ' + totalIssue + ' 处可优化：' + zero.length + ' 条疑似无效 · ' + wide.length + ' 条可能过宽 · ' + corpusDead.length + ' 条样本集从未命中')
+      ? ('发现 ' + totalIssue + ' 处可优化：' + zero.length + ' 条疑似无效 · ' + stale.length + ' 条近期失效 · ' +
+        wide.length + ' 条可能过宽 · ' + corpusDead.length + ' 条样本集从未命中')
       : '没有发现明显问题';
   }
 
   if (!totalIssue) {
-    box.innerHTML = '<div class="empty">规则库看起来很健康：没有长期 0 命中的启用规则，也没有发现明显过宽的屏蔽词。</div>';
+    box.innerHTML = '<div class="empty">规则库看起来很健康：没有长期 0 命中的启用规则，' +
+      '没有近期失效（曾经命中、近 30 天断档）的规则，也没有发现明显过宽的屏蔽词。</div>';
     return;
   }
 
@@ -2515,6 +2671,24 @@ function renderAudit() {
         '<td><span class="chip type">' + esc(TYPE_LABEL[r.type] || r.type) + '</span></td>' +
         '<td><span class="alias">' + esc(why.length ? why.join('；') : '发现库有同类实体却完全匹配不到，最可能是女优名写法/罗马音不一致') + '</span>' +
         ' <button class="mini" data-auditfix="' + esc(r.id) + '">改到规则库</button></td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+  if (stale.length) {
+    html += '<div class="tip" style="margin-top:14px;border-left:3px solid #ff9f1c;padding-left:8px">' +
+      '以下 <b>' + stale.length + '</b> 条<b>曾经命中过、近 30 天却一次没中</b>。' +
+      '这跟上面「从未命中」不是一回事 —— 它们原本是有用的，很可能是<b>站点改版</b>（卡片结构变了）、' +
+      '内容下架或改名。别急着删：先去那个站确认卡片是否还在、选择器是否还匹配，' +
+      '需要的话在「站点选择器」里改一下就能救回来。</div>' +
+      '<table><thead><tr><th style="width:130px">规则</th><th style="width:74px">类型</th>' +
+      '<th style="width:110px">累计命中</th><th>最后一次命中</th></tr></thead><tbody>';
+    stale.slice(0, 40).forEach(function (r) {
+      html += '<tr><td><span class="val">' + esc(r.value || '（纯表达式）') + '</span>' +
+        (r.expr ? '<br><span class="alias">⚙ ' + esc(r.expr) + '</span>' : '') + '</td>' +
+        '<td><span class="chip type">' + esc(TYPE_LABEL[r.type] || r.type) + '</span></td>' +
+        '<td>' + (r.hits || 0) + '</td>' +
+        '<td><span class="alias">' + esc(r.lastHit ? relTime(r.lastHit) : '—') + '</span>' +
+        ' <button class="mini" data-auditfix="' + esc(r.id) + '">定位到规则</button></td></tr>';
     });
     html += '</tbody></table>';
   }
@@ -2801,7 +2975,7 @@ function renderLearn() {
         D.rules.push({
           id: uid(), type: it.dim, value: it.value, aliases: [], action: it.action,
           match: 'contains', scope: SCOPE_OF[it.dim] || 'all', color: D.settings.hlColor,
-          sites: [], enabled: true, hits: 0, createdAt: Date.now(),
+          sites: [], enabled: true, hits: 0, hitDays: {}, createdAt: Date.now(),
           learnedFrom: { coverage: it.coverage, precision: it.precision, at: Date.now() }
         });
       }
@@ -3093,28 +3267,42 @@ function renderMonthly() {
     '<span><span style="display:inline-block;width:9px;height:9px;background:#7c5cff;border-radius:2px;margin-right:5px"></span>高亮</span>' +
     '</div></div>';
 
-  // ③ 本月命中最多的规则（用 lastHit 落在本月的规则近似，hits 是累计值不是月增量）
+  // ③ 本月命中最多的规则。
+  //    v7 起命中按天分桶（hitDays）⇒ 能算出本月**增量**（精确）；
+  //    老数据没有分桶 ⇒ 退回旧近似（lastHit 落在本月 + 按累计 hits 排序），并标明是近似。
+  //    这条正是「时效画像」的直接收益：以前只能拿累计值冒充月增量。
   var mk = rows[0].k;
-  var top = (D.rules || []).filter(function (r) {
-    if (!r.lastHit) return false;
-    return monthKeyOf(r.lastHit) === mk;
-  }).sort(function (a, b) { return (b.hits || 0) - (a.hits || 0); }).slice(0, 5);
-  html += '<div style="margin-top:16px"><div style="font-size:12px;color:#8b93a7;margin-bottom:6px">本月还在命中的规则 Top 5</div>';
+  var exactMonth = anyHitDays(D.rules);
+  var top = exactMonth
+    ? (D.rules || []).map(function (r) { return { r: r, n: monthHits(r, mk) }; })
+      .filter(function (x) { return (x.n || 0) > 0; })
+      .sort(function (a, b) { return b.n - a.n; }).slice(0, 5)
+    : (D.rules || []).filter(function (r) {
+      if (!r.lastHit) return false;
+      return monthKeyOf(r.lastHit) === mk;
+    }).sort(function (a, b) { return (b.hits || 0) - (a.hits || 0); })
+      .slice(0, 5).map(function (r) { return { r: r, n: null }; });
+  html += '<div style="margin-top:16px"><div style="font-size:12px;color:#8b93a7;margin-bottom:6px">本月命中最多的规则 Top 5' +
+    (exactMonth ? '' : '（近似）') + '</div>';
   if (!top.length) {
     html += '<div class="empty">本月没有规则命中记录。</div>';
   } else {
     html += '<table><thead><tr><th>规则</th><th style="width:74px">动作</th>' +
-      '<th style="width:90px">累计命中</th><th style="width:130px">最近命中</th></tr></thead><tbody>';
-    top.forEach(function (r) {
+      '<th style="width:90px">' + (exactMonth ? '本月命中' : '累计命中') + '</th><th style="width:130px">最近命中</th></tr></thead><tbody>';
+    top.forEach(function (x) {
+      var r = x.r;
       html += '<tr><td><span class="val">' + esc(r.value || '（纯表达式）') + '</span></td>' +
         '<td><span class="chip ' + esc(r.action) + '">' + (r.action === 'block' ? '屏蔽' : r.action === 'favorite' ? '收藏' : '高亮') + '</span></td>' +
-        '<td>' + (r.hits || 0) + '</td>' +
-        '<td><span class="alias">' + esc(relTime(r.lastHit)) + '</span></td></tr>';
+        '<td>' + (exactMonth ? x.n : (r.hits || 0)) + '</td>' +
+        '<td><span class="alias">' + esc(r.lastHit ? relTime(r.lastHit) : '—') + '</span></td></tr>';
     });
     html += '</tbody></table>';
   }
-  html += '<div class="tip">说明：这里的「累计命中」是该规则从建立至今的总次数，不是本月增量 —— 逐月增量没有单独记录，' +
-    '用「最近命中时间落在本月」来筛选本月还活跃的规则。</div></div>';
+  html += '<div class="tip">说明：' + (exactMonth
+    ? '「本月命中」是按天分桶（数据结构 v7 起记录）算出的**本月增量** —— 精确值。'
+    : '本月还活跃的规则按「最近命中时间落在本月」筛选、按累计次数排序，是**近似**；' +
+    '逐月增量从 v7 起才开始按天记录，此前的老数据没有分桶，算不出精确的月增量。') +
+    '</div></div>';
 
   box.innerHTML = html;
 

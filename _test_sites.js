@@ -208,12 +208,12 @@ check('SELECTOR_TEMPLATES 由模板派生', C.SELECTOR_TEMPLATES.length === with
     ['pornhub', 'youporn', 'xsijishe'].every(k => C.SELECTOR_TEMPLATES.some(t => t.test === k)));
 }
 
-/* ============ ⑥ 三处版本号与迁移步（与 _test_migrate 的守卫互补：这里只管 v5 / v6） ============ */
-const vOf = f => { const m = SRC[f].match(/var SCHEMA_VERSION = (\d+);/); return m ? Number(m[1]) : NaN; };
-check('三处 SCHEMA_VERSION 都是 6',
-  vOf('content') === 6 && vOf('background') === 6 && vOf('options') === 6);
-// v5：站点模板化（本站测试的主角）；v6：屏蔽三档 blockDisplay
-[[5, '站点模板化'], [6, '屏蔽三档 blockDisplay']].forEach(([v, why]) => {
+/* ============ ⑥ 迁移步存在性（这里只管「步在不在」，数值本身归 _test_docs.js 守） ============ */
+// 版本号「三处一致 + README 与代码一致」是 _test_docs.js 的判据，只此一处；
+// 这里曾经写死过「都是 6」，改 schema 时会变成第二处必过期的数字，已删。
+// 本站测试的职责是「某步迁移真的写进了三个入口」。
+// v5：站点模板化（本站测试的主角）；v6：屏蔽三档 blockDisplay；v7：命中时效画像 hitDays
+[[5, '站点模板化'], [6, '屏蔽三档 blockDisplay'], [7, '命中时效画像 hitDays']].forEach(([v, why]) => {
   ['content', 'background', 'options'].forEach(f => {
     check(f + '.js 的 migrate 里有 step ' + v + '（' + why + '）',
       new RegExp('(^|[^0-9])' + v + ':\\s*function\\s*\\(').test(SRC[f]));

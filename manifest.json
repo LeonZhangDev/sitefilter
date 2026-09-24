@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SiteFilter 卡片过滤器",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "description": "在指定网站右下角提供悬浮面板，按女优/标签/关键词屏蔽、收藏、高亮内容卡片。数据 100% 本地存储，不上传任何信息。",
   "permissions": [
     "storage",
@@ -54,7 +54,7 @@
         "content.css"
       ],
       "run_at": "document_idle",
-      "all_frames": false
+      "all_frames": true
     }
   ]
 }

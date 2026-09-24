@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 
-const EXT = 'C:\\Users\\admin\\Desktop\\site-filter';
+const EXT = __dirname;
 const code = require('./_load').contentBundle();
 
 // 模拟 javbus 个人收藏页：女优/片商/系列/导演 链接 + 番号（href 与图片 alt）

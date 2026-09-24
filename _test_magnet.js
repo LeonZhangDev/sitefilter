@@ -21,7 +21,7 @@ const path = require('path');
 const vm = require('vm');
 const { JSDOM } = require('jsdom');
 
-const EXT = 'C:\\Users\\admin\\Desktop\\site-filter';
+const EXT = __dirname;
 const code = require('./_load').contentBundle();
 
 let pass = true;
@@ -78,15 +78,31 @@ const BASE_SETTINGS = {
 
 function build(opts) {
   opts = opts || {};
-  const dom = new JSDOM(opts.html || PAGE, {
-    url: opts.url || 'https://example.com/page',
-    runScripts: 'outside-only',
-    pretendToBeVisual: true,
-  });
+  const wantSub = !!opts.subframe;
+  const dom = new JSDOM(
+    // 子 frame 场景：外层页面只放一个 <iframe>，内容脚本注入到 iframe 里执行。
+    // jsdom 会正确实现 iframe 的 frame 关系（iframeWin.top === topWin，iframeWin.self === iframeWin）
+    // ⇒ content.js 里的 IS_TOP 判定自然为 false，**不需要任何测试后门**。
+    // （试过直接改写 win.top：jsdom 里它是不可配置的 getter —— Cannot redefine property。）
+    wantSub ? '<!doctype html><html><body><iframe id="__f" src="about:blank"></iframe></body></html>'
+            : (opts.html || PAGE),
+    {
+      url: opts.url || 'https://example.com/page',
+      runScripts: 'outside-only',
+      pretendToBeVisual: true,
+    });
   const win = dom.window;
-  win.Element.prototype.getBoundingClientRect = function () {
+  const rectStub = function () {
     return { width: 220, height: 320, top: 0, left: 0, right: 220, bottom: 320, x: 0, y: 0 };
   };
+  win.Element.prototype.getBoundingClientRect = rectStub;
+  // W = 内容脚本实际运行的那个 window（顶层就是 win，子 frame 场景是 iframe 的 contentWindow）
+  let W = win;
+  if (wantSub) {
+    W = win.document.getElementById('__f').contentWindow;
+    W.Element.prototype.getBoundingClientRect = rectStub;
+    W.document.body.innerHTML = opts.html || PAGE;
+  }
   const store = {};
   store['sf_data_v1'] = {
     // 不写 schemaVersion ⇒ 从 v1 一路迁移到当前版本（与真实老数据同路径）
@@ -101,7 +117,7 @@ function build(opts) {
       local: {}, sync: {},
       onChanged: { addListener() { } },
     },
-    runtime: { sendMessage: opts.sendMessage || function () { return Promise.resolve(); }, onMessage: { addListener() { } } },
+    runtime: { sendMessage: opts.sendMessage || function () { return Promise.resolve(); }, onMessage: { addListener(fn) { (win.__sfMsgListeners = win.__sfMsgListeners || []).push(fn); } } },
   };
   const dlGet = (k, cb) => cb({ [k]: store[k] });
   const dlSet = (o, cb) => { Object.assign(store, o); if (cb) cb(); };
@@ -121,28 +137,28 @@ function build(opts) {
     },
   });
   const sandbox = {
-    window: win, document: win.document, location: win.location,
-    navigator: win.navigator, chrome: chromeProxy,
-    setTimeout: win.setTimeout.bind(win), clearTimeout: win.clearTimeout.bind(win),
-    setInterval: win.setInterval.bind(win), clearInterval: win.clearInterval.bind(win),
-    addEventListener: win.addEventListener.bind(win), removeEventListener: win.removeEventListener.bind(win),
-    getComputedStyle: win.getComputedStyle.bind(win),
+    window: W, document: W.document, location: W.location,
+    navigator: W.navigator, chrome: chromeProxy,
+    setTimeout: W.setTimeout.bind(W), clearTimeout: W.clearTimeout.bind(W),
+    setInterval: W.setInterval.bind(W), clearInterval: W.clearInterval.bind(W),
+    addEventListener: W.addEventListener.bind(W), removeEventListener: W.removeEventListener.bind(W),
+    getComputedStyle: W.getComputedStyle.bind(W),
     // 内容脚本在 boot() 里挂 MutationObserver 监听无限滚动；不注入会一路抛到 process 级
-    MutationObserver: win.MutationObserver,
-    Node: win.Node, Element: win.Element, HTMLElement: win.HTMLElement,
-    KeyboardEvent: win.KeyboardEvent, MouseEvent: win.MouseEvent, CustomEvent: win.CustomEvent,
+    MutationObserver: W.MutationObserver,
+    Node: W.Node, Element: W.Element, HTMLElement: W.HTMLElement,
+    KeyboardEvent: W.KeyboardEvent, MouseEvent: W.MouseEvent, CustomEvent: W.CustomEvent,
     Map, Set, WeakMap, Promise, JSON, Math, Date, URL, URLSearchParams,
     RegExp, String, Number, Boolean, Array, Object, Error,
     console: { log() { }, warn() { }, error() { } },
     decodeURIComponent, encodeURIComponent, parseInt, parseFloat, isNaN,
-    atob: win.atob.bind(win), btoa: win.btoa.bind(win),
+    atob: W.atob.bind(W), btoa: W.btoa.bind(W),
   };
   sandbox.globalThis = sandbox;
   // 显式打开只读测试钩子
-  win.__siteFilterTestApi = 'magnet-only';
+  W.__siteFilterTestApi = 'magnet-only';
   vm.createContext(sandbox);
   vm.runInContext(code, sandbox, { filename: 'content-bundle' });
-  return { win, store, sandbox };
+  return { win, W, store, sandbox };
 }
 
 /* 钩子是否可用 —— 不可用则整个套件失去意义，必须先红 */
@@ -597,6 +613,144 @@ const dlText = d => d.raw;
     const hint = list.parentNode.querySelector('.cf-maghint');
     check('[TierB-降级] 面板内说明失败原因（含具体错误）',
       !!hint && /找不到下载器/.test(hint.textContent));
+  }
+
+  /* ================================================================
+   * 第三层：磁力归属到卡片（角标 + 卡片右键菜单）
+   * 下载页签是**整页扁平**的 —— 一页几十张卡扫出几百条链接时，
+   * 「这张卡上有几条磁力」必须真的接到卡片上（class / data-*），
+   * 而不是只躺在 dlLinks 里等人去猜。
+   * ================================================================ */
+  const CARD_HTML = `<!doctype html><html><body>
+    <div class="list">
+      <div class="item"><a href="${MAG_A1.replace(/&/g, '&amp;')}">ABC-001</a>
+        <a href="${MAG_A2.replace(/&/g, '&amp;')}">mirror</a></div>
+      <div class="item"><a href="${MAG_B.replace(/&/g, '&amp;')}">ABC-002</a></div>
+      <div class="item"><a href="/detail/3">ABC-003</a></div>
+      <div class="item"><a href="/detail/4">ABC-004</a></div>
+    </div></body></html>`;
+  const CARD_SITES = [{ id: 's1', pattern: '*://example.com/*', enabled: true, selector: '.item', note: 'T' }];
+
+  {
+    const { win } = build({ html: CARD_HTML, sites: CARD_SITES });
+    await sleep(900);
+    const doc = win.document;
+    const cards = Array.from(doc.querySelectorAll('.item'));
+    check('[归属] 前提：4 张卡都被识别为 .cf-card（否则本节断言无意义）',
+      doc.querySelectorAll('.item.cf-card').length === 4);
+    check('[归属] 有磁力的卡片挂上 .cf-hasmagnet 角标', cards[0].classList.contains('cf-hasmagnet'));
+    check('[归属] 角标计数走 data-cf-mg（CSS attr() 读它）', cards[0].dataset.cfMg === '1');
+    check('[归属] 同一张卡上的两个变体只算 1 条（已归并，不是 2）',
+      cards[0].dataset.cfMg === '1');
+    check('[归属] 第二张卡的磁力归到它自己（1 条）',
+      cards[1].classList.contains('cf-hasmagnet') && cards[1].dataset.cfMg === '1');
+    check('[归属] 没有磁力的两张卡不挂角标',
+      !cards[2].classList.contains('cf-hasmagnet') && !cards[3].classList.contains('cf-hasmagnet'));
+    // 角标靠 class + CSS ::after，不许往页面里插节点（插了会触发自己的 MutationObserver → 每轮自激）
+    check('[归属] 不靠插 DOM 节点实现（卡片里没有额外子元素）',
+      cards[0].querySelectorAll('span.cf-mg').length === 0);
+
+    // 卡片右键菜单：按卡取磁力
+    cards[0].dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true, clientX: 10, clientY: 10 }));
+    const menu = doc.querySelector('.cf-cardmenu');
+    check('[归属] 卡片右键菜单能弹出', !!menu);
+    const copyBtn = menu && menu.querySelector('[data-cm="copycardmagnet"]');
+    check('[归属] 菜单里有「复制这张卡的磁力」（带条数）',
+      !!copyBtn && /复制这张卡的磁力（1）/.test(copyBtn.textContent));
+    check('[归属] magnetAction=copy（默认）时不给「打开」项（零行为变化）',
+      !!menu && !menu.querySelector('[data-cm="opencardmagnet"]'));
+    if (copyBtn) {
+      copyBtn.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+      check('[归属] 点「复制这张卡的磁力」后菜单关闭', !doc.querySelector('.cf-cardmenu'));
+    }
+  }
+
+  /* 关「标记链接」→ 角标摘掉，但数据仍在（面板还得能用） */
+  {
+    const { win } = build({ html: CARD_HTML, sites: CARD_SITES, settings: { probeMark: false } });
+    await sleep(900);
+    const doc = win.document;
+    check('[归属] 关掉「标记链接」时不挂卡片角标',
+      doc.querySelectorAll('.cf-hasmagnet').length === 0);
+    const h = hookOf(win);
+    check('[归属] 但探测数据还在（A1/A2 归并 + B = 2 条磁力）',
+      h && h.dlLinks().filter(d => d.type === 'magnet').length === 2);
+  }
+
+  /* magnetAction=both → 卡片菜单给出「打开这张卡的磁力」 */
+  {
+    const { win } = build({ html: CARD_HTML, sites: CARD_SITES, settings: { magnetAction: 'both' } });
+    await sleep(900);
+    const doc = win.document;
+    doc.querySelector('.item').dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true }));
+    const menu = doc.querySelector('.cf-cardmenu');
+    check('[归属] magnetAction=both 时菜单出现「打开这张卡的磁力」',
+      !!menu && !!menu.querySelector('[data-cm="opencardmagnet"]'));
+  }
+
+  /* ================================================================
+   * 第四层：iframe（子 frame 探测 → 顶层 frame 汇总）
+   * 子 frame 里只探测 + 上报，不建面板、不画标记、不应用规则。
+   * ================================================================ */
+  {
+    const sent = [];
+    const { W } = build({
+      subframe: true,
+      sendMessage: function (msg) { sent.push(msg); return Promise.resolve(); },
+    });
+    await sleep(900);
+    const doc = W.document;
+    check('[frame] 前提：这个 window 确实不是顶层（top !== self）', W.top !== W.self);
+    check('[frame] 子 frame 不建悬浮面板（没有 .cf-host）', !doc.querySelector('.cf-host'));
+    const rep = sent.filter(x => x && x.type === 'sf_frame_probe').pop();
+    check('[frame] 子 frame 把探测结果上报给后台（sf_frame_probe）', !!rep);
+    check('[frame] 上报内容含页面里的磁力',
+      !!rep && rep.links.some(function (l) { return /^magnet:/i.test(l.raw); }));
+    check('[frame] 上报条目带 type（顶层用同一套解析复用，不必二次猜类型）',
+      !!rep && rep.links.every(function (l) { return typeof l.type === 'string' && l.type; }));
+    check('[frame] 子 frame 不在页面里画绿虚线标记', doc.querySelectorAll('.cf-dl').length === 0);
+    check('[frame] 子 frame 不做卡片分类（页面里没有 .cf-card）',
+      doc.querySelectorAll('.cf-card').length === 0);
+  }
+
+  {
+    const { win } = build({});
+    await sleep(900);
+    const h = hookOf(win);
+    const before = h ? h.dlLinks().length : 0;
+    const lns = win.__sfMsgListeners || [];
+    check('[frame] 顶层 frame 注册了消息监听', lns.length > 0);
+
+    // 1) 子 frame 上报一条顶层页面里没有的磁力 → 应并入
+    const SUB_HASH = 'abcdef0123456789abcdef0123456789abcdef01';
+    const subMagnet = 'magnet:?xt=urn:btih:' + SUB_HASH + '&dn=' + encodeURIComponent('SUB-FRAME-ONLY.mkv');
+    lns.forEach(fn => fn({ type: 'sf_frame_probe', frameId: 3, links: [{ raw: subMagnet, type: 'magnet' }] }));
+    await sleep(60);
+    const after = hookOf(win).dlLinks();
+    check('[frame] 子 frame 的链接被并入顶层列表', after.some(d => d.raw === subMagnet));
+    check('[frame] 并入后条目数 +1（' + before + ' → ' + after.length + '）', after.length === before + 1);
+    const list = await openDownloadTab(win);
+    check('[frame] 下载页签里能看到子 frame 的链接',
+      !!list && list.textContent.indexOf('SUB-FRAME-ONLY') !== -1);
+    check('[frame] 下载页签标出「有几条来自子框架」',
+      !!list && list.textContent.indexOf('来自子框架') !== -1);
+
+    // 2) 跨 frame 同一 infohash 必须归并（页面里已有 HASH_A，子 frame 再报一次）
+    const dup = 'magnet:?xt=urn:btih:' + HASH_A + '&dn=' + encodeURIComponent('ABC-001-mirror.mkv');
+    lns.forEach(fn => fn({ type: 'sf_frame_probe', frameId: 4, links: [{ raw: dup, type: 'magnet' }] }));
+    await sleep(60);
+    const after2 = hookOf(win).dlLinks();
+    check('[frame] 跨 frame 同一 infohash 只出现一条（归并，不是两条）',
+      after2.filter(d => d.magnet && d.magnet.hash === HASH_A).length === 1);
+
+    // 3) 该 frame 重新上报为空（导航走了 / 内容变了）→ 旧条目必须消失，不留残影
+    lns.forEach(fn => fn({ type: 'sf_frame_probe', frameId: 3, links: [] }));
+    await sleep(60);
+    const after3 = hookOf(win).dlLinks();
+    check('[frame] 子 frame 更新为空后旧条目消失（不留残影）',
+      !after3.some(d => d.raw === subMagnet));
+    check('[frame] 顶层自己的链接不受影响（子 frame 清空只撤它自己的）',
+      after3.some(d => /^magnet:/i.test(d.raw) && d.magnet && d.magnet.hash === HASH_A));
   }
 
   function countOccurrences(s, sub) {

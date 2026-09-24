@@ -175,6 +175,37 @@ function load(seed) {
   }).catch(e => check('purgeExpiredRules 未抛错（' + (e && e.message) + '）', false));
 }
 
+/* ============ ③e v6 → v7：规则命中按天分桶（hitDays） ============ */
+{
+  const { ctx } = load({ sf_data_v1: { settings: {}, schemaVersion: 6 } });
+  check('当前 SCHEMA_VERSION 至少是 7', ctx.SCHEMA_VERSION >= 7);
+  const v7 = ctx.migrate({
+    settings: {}, schemaVersion: 6,
+    rules: [
+      { id: 'rA', hits: 7, lastHit: 123 },                 // 老规则：无 hitDays → 补空对象
+      { id: 'rB', hits: 3, hitDays: { '2026-1-1': 2 } },    // 已有分桶 → 原样保留
+      { id: 'rC', hits: 0, hitDays: [] },                   // 非法（数组）→ 重置
+      { id: 'rD', hits: 0, hitDays: 'oops' },               // 非法（字符串）→ 重置
+      null,                                                 // 脏数据不许抛错
+    ],
+  });
+  check('v7 迁移后版本号 = 当前版本', v7.schemaVersion === ctx.SCHEMA_VERSION);
+  const by = {};
+  (v7.rules || []).forEach(r => { if (r && r.id) by[r.id] = r; });
+  check('v7 迁移给老规则补上 hitDays（对象）', !!by.rA && !!by.rA.hitDays && typeof by.rA.hitDays === 'object');
+  // 关键：**不回填历史** —— 累计 hits 反推不出每天几次，摊平进分桶就是编数据
+  check('v7 迁移不回填历史（hits=7 但分桶仍是空的）',
+    !!by.rA && Object.keys(by.rA.hitDays).length === 0 && by.rA.hits === 7);
+  check('v7 迁移不动已有的分桶数据', !!by.rB && by.rB.hitDays['2026-1-1'] === 2);
+  check('v7 迁移把非法分桶（数组）重置为空对象',
+    !!by.rC && !Array.isArray(by.rC.hitDays) && Object.keys(by.rC.hitDays).length === 0);
+  check('v7 迁移把非法分桶（字符串）重置为空对象',
+    !!by.rD && typeof by.rD.hitDays === 'object' && !Array.isArray(by.rD.hitDays));
+  check('v7 迁移不因脏数据（null 规则项）抛错', (v7.rules || []).length === 5);
+  check('v7 迁移幂等：再跑一次结果一致',
+    JSON.stringify(ctx.migrate(JSON.parse(JSON.stringify(v7)))) === JSON.stringify(v7));
+}
+
 /* ============ ③ 已有新字段不被覆盖 ============ */
 {
   const { ctx } = load({ sf_data_v1: { settings: {} } });

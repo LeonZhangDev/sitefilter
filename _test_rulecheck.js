@@ -12,7 +12,7 @@ const path = require('path');
 const vm = require('vm');
 const { JSDOM } = require('jsdom');
 
-const EXT = 'C:\\Users\\admin\\Desktop\\site-filter';
+const EXT = __dirname;
 const contentCode = require('./_load').contentBundle();   // 整包注入：与浏览器一致
 
 let pass = true;

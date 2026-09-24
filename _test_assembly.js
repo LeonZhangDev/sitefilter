@@ -128,5 +128,96 @@ check('content.js 是最后一个「通用」脚本（后面只允许站点专�
     (packager.match(/EXCLUDE_RE\.search\(/g) || []).length === 1);
 }
 
+/* 测试文件不许硬编码本机绝对路径。
+ *
+ * 这条是补的：12 个测试文件都把仓库路径**写死成开发机的绝对路径**
+ * （`const EXT = '<C 盘用户目录>/Desktop/site-filter';` 这种形态，具体串见 git 历史），
+ * 其中 3 个真的拿它去 readFileSync —— 于是 GitHub Actions 的 Linux runner 上
+ * 直接 ENOENT 抛异常、脚本立刻死（表现为「❌ 通过 0 失败 0」，看着像断言失败其实
+ * 一条断言都没跑）。本地 `python ci.py` 永远全绿，因为那台机器上这个路径真的存在。
+ *
+ * ⇒ **「本地全绿」不等于「CI 绿」**。这条守卫就是让「本地绿、CI 红」不再可能悄悄发生：
+ *    ① 只要文件里用到 EXT，它的声明就必须是 __dirname；
+ *    ② 不许出现本机用户目录形态的绝对路径（Windows 盘符 + Users，或 macOS /Users/<名字>/）。
+ *       只钉这两种形态，是为了不误伤 fixture 里的假路径（如 output_dir: 'D:/Downloads/...'）。
+ */
+{
+  const BAD_PATH = /C:[\\/]{1,2}Users[\\/]|\/Users\/[A-Za-z0-9._-]+\//;
+  const all = fs.readdirSync(EXT).filter(f => /^_test_.*\.(js|py)$/.test(f) || f === '_smoke.js');
+  const jsFiles = all.filter(f => /\.js$/.test(f));
+
+  const wrongExt = [], pathHits = [];
+  for (const f of jsFiles) {
+    const src = fs.readFileSync(path.join(EXT, f), 'utf8');
+    if (/\bEXT\b/.test(src) && !/const\s+EXT\s*=\s*__dirname\s*;/.test(src)) wrongExt.push(f);
+  }
+  for (const f of all) {
+    fs.readFileSync(path.join(EXT, f), 'utf8').split('\n').forEach((l, i) => {
+      if (BAD_PATH.test(l)) pathHits.push(f + ':' + (i + 1) + ' ' + l.trim().slice(0, 80));
+    });
+  }
+  check('用到 EXT 的测试文件都以 __dirname 声明（写死本机路径会让 CI 崩）', wrongExt.length === 0);
+  if (wrongExt.length) console.log('        违规：' + wrongExt.join(', '));
+  check('测试文件里没有本机用户目录的绝对路径', pathHits.length === 0);
+  if (pathHits.length) pathHits.forEach(h => console.log('        ' + h));
+}
+
+/* 套件崩溃（0/0 且 exit≠0）必须留下线索。
+ * 同上一次踩的坑：崩溃时一行 FAIL 都没有，而 run_tests() 以前只在「失败>0」时收集明细，
+ * 于是 CI 日志里只剩「❌ 通过 0 失败 0」—— 结论明明在 stderr 里，被门禁自己吞了。 */
+{
+  const packager = fs.readFileSync(path.join(EXT, 'make_package.py'), 'utf8');
+  check('run_tests() 会区分「崩溃」与「断言失败」',
+    /CRASH_TAIL_LINES/.test(packager) && /crashedSuites/.test(packager));
+  check('run_tests() 崩溃时会回显套件末尾输出（而不是只印一行 ❌）',
+    /末尾/.test(packager) && /record\(/.test(packager));
+}
+
+/* iframe 探测：子 frame 只探测 + 上报，顶层 frame 汇总展示。
+ *
+ * 这条链上有几处「顺手简化一下就会坏」的地方，而且全是静默的：
+ *   ① manifest 的 all_frames 被改回 false → 子 frame 里根本不注入，功能整体失效，
+ *      但本地测试照样全绿（测试自己塞 sandbox，不读 manifest）；
+ *   ② 子 frame 里顺手建 UI / 应用规则 → iframe（这类站点里多为隐藏广告位或播放器）
+ *      里长出一个悬浮球，或者规则把 iframe 内部 DOM 改坏（连面板都没有，用户看不到）；
+ *   ③ 转发时 frameId 取自 msg 自述而非 sender.frameId → 任何 frame 都能冒充别的 frame；
+ *      更要紧的是有人图省事把通道换成 window.top.postMessage —— 那样**页面脚本**也能
+ *      往「下载」页签里塞链接，而这些链接最终会被「打开」，不能由页面决定。
+ * 行为侧由 _test_magnet.js 用真实 jsdom <iframe> 复核（那边 W.top !== W.self 自然成立），
+ * 这里守的是声明本身。 */
+{
+  const cs = (manifest.content_scripts || [])[0] || {};
+  check('manifest 开启 all_frames（否则子 frame 里根本不注入，功能整体失效）', cs.all_frames === true);
+  const content = fs.readFileSync(path.join(EXT, 'content.js'), 'utf8');
+  const bg = fs.readFileSync(path.join(EXT, 'background.js'), 'utf8');
+  check('content.js 判定「自己是不是顶层 frame」',
+    /var IS_TOP =/.test(content) && /window\.top === window\.self/.test(content));
+  check('子 frame 走独立启动路径（bootFrame），不建 UI',
+    /function bootFrame\(/.test(content) && /if \(!IS_TOP\) \{ bootFrame\(\); return; \}/.test(content));
+  check('bootFrame 里不建 UI、不碰面板', (function () {
+    const i = content.indexOf('function bootFrame(');
+    if (i === -1) return false;
+    const body = content.slice(i, content.indexOf('\n  function boot(', i));
+    return body.length > 0 && body.indexOf('buildUI') === -1 && body.indexOf('keys(') === -1;
+  })());
+  check('runPass 在子 frame 里只探测、拿到结果就返回（不应用规则）', (function () {
+    const i = content.indexOf('function runPass()');
+    if (i === -1) return false;
+    const body = content.slice(i, i + 1400);
+    return /if \(!IS_TOP\) \{[\s\S]*?probeLinks\(\);[\s\S]*?return;/.test(body);
+  })());
+  check('子 frame → 顶层 走后台转发，frameId 取自 sender（不信 msg 自述）',
+    /msg\.type === 'sf_frame_probe'/.test(bg) && /sender\.frameId/.test(bg));
+  check('后台只把上报转给 frameId 0（顶层）', /\{ frameId: 0 \}/.test(bg));
+  // 判「有没有用」时先剥掉注释行 —— 否则解释「为什么不用它」的注释会被自己绊倒
+  // （这条踩过两次：本文件和 _test_assembly 的路径守卫都被自己的注释命中过）。
+  const codeOf = src => src.split('\n')
+    .filter(l => { const t = l.trim(); return !(t.startsWith('*') || t.startsWith('//') || t.startsWith('/*')); })
+    .join('\n');
+  check('通道没有被退化成 window.top.postMessage（那是页面可伪造的）',
+    codeOf(content).indexOf('window.top.postMessage') === -1 &&
+    codeOf(bg).indexOf('window.top.postMessage') === -1);
+}
+
 console.log('\n' + (pass ? '全部通过' : '存在失败项'));
 process.exit(pass ? 0 : 1);
