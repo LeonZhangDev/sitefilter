@@ -5,7 +5,9 @@
 - XChina Collector integration is implemented on `main` in **both** repositories and pushed to the public
   remotes (`LeonZhangDev/sitefilter`, `LeonZhangDev/universal-web-collector`), verified 2026-09-23 with
   `git ls-remote`. The earlier "not merged / not published" status no longer applies.
-- The integration's user-facing notes are released under `1.3.0` (2026-09-23); `manifest.json` carries that version.
+- The integration's user-facing notes are released under `1.3.0` (2026-09-23), with a `1.3.1` patch
+  on 2026-09-24 (the Tier B native host is now shipped in the zip; body-text magnets split by
+  invisible whitespace are no longer truncated). `manifest.json` carries `1.3.1`.
 - Task 10 browser behavior and output integrity passed, but the data-retention gate remains open: Tasks 1–3 were previously verified and later found missing from the same live database and numbered download root. The deletion source is unknown and awaits user clarification. Task 4 remains the current retained live acceptance task.
 
 ## Verification
@@ -23,7 +25,7 @@
   (2026-09-22 updated: 需求 002 三档屏蔽 L1、番号站数量补足 L2、建议 ②④⑤ 已落地；
    磁力深度 L2 全字段解析 + L4 同 infohash 归并/排序已落地，新增 `_test_magnet.js`。)
 - SiteFilter feature work is on `main` and pushed to the public remote. It is **implemented, CI-green,
-  and released as `1.3.0`** — version number only, no tag, matching this repository's history
+  and released as `1.3.1`** — version number only, no tag, matching this repository's history
   (`1.0.1` / `1.1.0` / `1.2.0` carry no tags either).
   (2026-09-23 updated: 拆 `content.js` 完成 —— 磁力解析层抽成 `magnet-core.js`，站点表与全部派生抽成
   `site-templates.js`，三端共用同一份，不再有手抄副本。文档里的「未合并 / 未推送」说法已随之更正。)
@@ -48,5 +50,11 @@
   unless separately authorized. Per `decisions/`, task records and the download root belong to the
   Collector side, so this is a Collector-side read-only investigation rather than a SiteFilter task.
 
-The review-and-merge step is done (both branches are on `main` and pushed), and `1.3.0` was cut on
-2026-09-23 (version number only, no tag). No other code work is pending on the SiteFilter side.
+The review-and-merge step is done (both branches are on `main` and pushed); `1.3.0` was cut on
+2026-09-23 and the `1.3.1` patch on 2026-09-24 (version number only, no tag).
+
+Decided against, recorded in `docs/requirements/003-feature-suggestions.md`: magnet depth **L5**
+(local magnet library + hand-off to Collector for P2P download). Tier A/B already cover the original
+request; L5 would need a P2P stack inside Collector, whose download stack is HTTP-gallery oriented,
+and it is blocked by environment (no BT client or downloader here) plus a concurrent Collector
+session. Reopen only when a BT tool is installed and the Collector side agrees to extend the bridge.

@@ -916,7 +916,7 @@ python ci.py --release minor           # 门禁通过 → 抬次版本 → 出�
 - `dist/build-info.json` —— 版本、`schemaVersion`、构建时间、git hash / 是否 dirty、
   每个文件的 sha256、以及**这次打包前跑测试的结果**。出问题时先看这个。
 
-`schemaVersion: 6` · `manifest version: 1.3.0`
+`schemaVersion: 6` · `manifest version: 1.3.1`
 
 **打包脚本做了什么**：只收录**白名单文件**（而不是"排除"——避免漏排测试/临时文件）、校验
 manifest 必填字段与图标真实尺寸、检查 `default_locale` 之类会导致「加载失败」的坑、
