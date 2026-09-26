@@ -1,6 +1,6 @@
 'use strict';
 var DATA_KEY = 'sf_data_v1';
-var SCHEMA_VERSION = 8;   // 与 content.js / background.js 保持一致
+var SCHEMA_VERSION = 9;   // 与 content.js / background.js 保持一致
 
 /* ---------------- 错误日志（与 content/background 共用同一份 errLog） ---------------- */
 var ERR_MAX = 200;
@@ -80,7 +80,7 @@ var D = {
   statsLog: {}, recSettings: {}, recHistory: [], dailyRecs: {}, recFeedback: {},
   watchlist: {}, cooc: {}, similarRecs: {}, recFeedbackDaily: {}, peeks: {}, errLog: [],
   learned: {}, dismissedLearn: {}, profiles: [], activeProfile: '', expiredLog: [],
-  codeMarks: {}, dropped: {}
+  codeMarks: {}, dropped: {}, siteHealth: {}
 };
 
 /* ---------------- 数据迁移 ----------------
@@ -163,6 +163,11 @@ function migrate(d) {
     8: function (x) {
       x.codeMarks = x.codeMarks || {};
       x.dropped = x.dropped || {};
+    },
+    // v8 → v9：站点模板失效自检 siteHealth（站点 id → { lastOkAt, failStreak }）。
+    // 必须与 content.js / background.js 的 step 9 逐字一致。
+    9: function (x) {
+      x.siteHealth = x.siteHealth || {};
     }
   };
   for (var v = from + 1; v <= SCHEMA_VERSION; v++) {
@@ -171,6 +176,38 @@ function migrate(d) {
   d.schemaVersion = SCHEMA_VERSION;
   return d;
 }
+/* ---------------- 站点模板失效自检（与 content.js 共用判据，纯本地） ----------------
+ * 判据见 content.js 的 recordHealth / healthTick：只报「曾多次成功、近期连续多次 0 命中」的站，
+ * 避免把一次空搜索误判成模板坏了。这里只渲染提示，不自动改任何东西（修入口 🎯 早已存在）。 */
+function dayNumOf(ts) { return Math.floor((ts || 0) / 86400000); }
+var HEALTH_FAIL_THRESHOLD = 3;
+function isSiteStale(h, threshold) {
+  return !!(h && h.failStreak >= (threshold || HEALTH_FAIL_THRESHOLD) && h.lastOkAt > 0);
+}
+/* 规则去重 / 比对用的键：同一 (类型, 值) 视为同一条规则。 */
+function ruleKeyOf(t) { return (t.type || '') + '|' + String(t.value || '').toLowerCase(); }
+/* 规则包升级 diff：把新包与现有规则（按 pack.id 归类）比对，算出 新增 / 移除 / 保留。
+ * 纯函数，便于单测；packId 相同的旧规则中、不在新包里的，就是"该包旧版本有、新版删掉的"。 */
+function computePackUpgrade(pack, rules) {
+  var seen = {};
+  (rules || []).forEach(function (r) { seen[ruleKeyOf(r)] = 1; });
+  var newKeys = {};
+  (pack.rules || []).forEach(function (t) { newKeys[ruleKeyOf(t)] = 1; });
+  var oldPack = (rules || []).filter(function (r) { return r.pack && r.pack.id === pack.id; });
+  var oldKeys = {};
+  oldPack.forEach(function (r) { oldKeys[ruleKeyOf(r)] = 1; });
+  var added = (pack.rules || []).filter(function (t) { return !seen[ruleKeyOf(t)]; }).length;
+  var removed = Object.keys(oldKeys).filter(function (k) { return !newKeys[k]; }).length;
+  var kept = Object.keys(oldKeys).filter(function (k) { return newKeys[k]; }).length;
+  return {
+    upgrading: oldPack.length > 0,
+    oldVersion: oldPack[0] ? (oldPack[0].pack.version || '1.0') : null,
+    added: added, removed: removed, kept: kept
+  };
+}
+// 测试钩子：仅供 _test_options.js 用（该文件经 win.eval 严格模式加载，顶层函数不挂 window）。
+if (typeof window !== 'undefined' && window.__sfTest) window.computePackUpgrade = computePackUpgrade;
+
 // 撤销快照（仅 rules + groups，最多 40 步）
 var undoStack = [];
 var dragId = null;   // 规则拖动排序用
@@ -228,6 +265,7 @@ function get() {
       D.shopMarks = d.shopMarks || {};
       D.codeMarks = d.codeMarks || {};
       D.dropped = d.dropped || {};
+      D.siteHealth = d.siteHealth || {};
       D.errLog = d.errLog || [];
       D.learned = d.learned || {};
       D.dismissedLearn = d.dismissedLearn || {};
@@ -610,6 +648,29 @@ function renderSites() {
   });
   html += '</tbody></table>';
   document.getElementById('siteTable').innerHTML = html;
+
+  /* 站点模板失效自检提示：列出「曾多次成功、近期连续多次 0 命中」的站点。
+   * 只提示、不改任何东西 —— 修的入口 🎯 早已存在于站点页面。每次重渲染先清掉旧提示。 */
+  var tbl = document.getElementById('siteTable');
+  if (tbl && tbl.parentNode) {
+    Array.prototype.slice.call(tbl.parentNode.querySelectorAll('.site-health-warn')).forEach(function (n) { n.remove(); });
+    var stale = (D.siteHealth && typeof D.siteHealth === 'object')
+      ? Object.keys(D.siteHealth).filter(function (id) { return isSiteStale(D.siteHealth[id], HEALTH_FAIL_THRESHOLD); })
+      : [];
+    if (stale.length) {
+      var parts = stale.map(function (id) {
+        var s = D.sites.filter(function (x) { return x.id === id; })[0];
+        var h = D.siteHealth[id];
+        var days = Math.max(1, Math.floor((Date.now() - (h.lastOkAt || Date.now())) / 86400000));
+        return (s ? (s.note || s.pattern) : id) + '（上次成功约 ' + days + ' 天前，连续 ' + (h.failStreak || 0) + ' 次 0 命中）';
+      });
+      var warn = document.createElement('div');
+      warn.className = 'site-health-warn';
+      warn.style.cssText = 'margin-top:8px;padding:8px 10px;border:1px solid #ffb3c1;border-radius:6px;color:#ffd2dc;background:rgba(255,80,110,.08)';
+      warn.textContent = '⚠ 以下站点可能已改版、卡片选择器失效：' + parts.join('；') + '。请到对应站点页面点 🎯 重新选择卡片。';
+      tbl.parentNode.insertBefore(warn, tbl.nextSibling);
+    }
+  }
 
   document.getElementById('siteTable').querySelectorAll('tr[data-id]').forEach(function (tr) {
     var id = tr.dataset.id;
@@ -1904,12 +1965,26 @@ if (_packSel) {
     var id = document.getElementById('packSel').value;
     var pack = RULE_PACKS.filter(function (x) { return x.id === id; })[0];
     if (!pack) return;
+    var diff = computePackUpgrade(pack, D.rules);
+    // 升级（已导入过同 id 的包）且本次"有移除项、或版本号变化"时，先跟用户确认，避免静默删规则。
+    // 纯重复导入（版本一致、无移除、无新增）不弹确认，直接走下面的去重提示。
+    if (diff.upgrading && (diff.removed > 0 || (diff.oldVersion && pack.version && diff.oldVersion !== pack.version))) {
+      var ok = confirm('已导入过「' + pack.name + '」v' + diff.oldVersion + '，当前包为 v' + (pack.version || '1.0') + '。\n' +
+        '将：新增 ' + diff.added + ' 条 / 移除 ' + diff.removed + ' 条 / 保留 ' + diff.kept + ' 条。\n\n确认升级？');
+      if (!ok) return;
+      // 移除「该包旧版里有、新版里没有」的规则（它们来自这个包，不是用户手输的）
+      D.rules = D.rules.filter(function (r) {
+        if (!(r.pack && r.pack.id === pack.id)) return true;
+        var k = ruleKeyOf(r);
+        return pack.rules.some(function (t) { return ruleKeyOf(t) === k; });
+      });
+    }
     var seen = {};
-    D.rules.forEach(function (r) { seen[r.type + '|' + String(r.value || '').toLowerCase()] = 1; });
+    D.rules.forEach(function (r) { seen[ruleKeyOf(r)] = 1; });
     var added = 0;
     pushUndo();
     pack.rules.forEach(function (t) {
-      var key = t.type + '|' + String(t.value || '').toLowerCase();
+      var key = ruleKeyOf(t);
       if (seen[key]) return;
       seen[key] = 1;
       D.rules.push({
@@ -1924,10 +1999,23 @@ if (_packSel) {
       });
       added++;
     });
+    // 升级：把该包现存规则的版本号也同步成新包版本（方便下次 diff）
+    D.rules.forEach(function (r) {
+      if (r.pack && r.pack.id === pack.id) { r.pack.version = pack.version || '1.0'; r.pack.at = Date.now(); }
+    });
     save().then(function () {
       renderRules();
-      document.getElementById('packTip').textContent =
-        added ? ('已导入 ' + added + ' 条规则（跳过 ' + (pack.rules.length - added) + ' 条已存在的）。') : '这个规则包的条目都已存在，未重复导入。';
+      var msg;
+      if (diff.upgrading && diff.removed === 0 && added === 0) {
+        msg = '这个规则包的条目都已存在，未重复导入。';
+      } else if (diff.upgrading) {
+        msg = '已升级「' + pack.name + '」到 v' + (pack.version || '1.0') + '：新增 ' + added + ' 条' +
+          (diff.removed ? (' / 移除 ' + diff.removed + ' 条') : '') + '。';
+      } else {
+        msg = added ? ('已导入 ' + added + ' 条规则（跳过 ' + (pack.rules.length - added) + ' 条已存在的）。')
+          : '这个规则包的条目都已存在，未重复导入。';
+      }
+      document.getElementById('packTip').textContent = msg;
     });
   });
 })();

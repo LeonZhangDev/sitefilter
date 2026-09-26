@@ -10,7 +10,7 @@
   window.__SITEFILTER_LOADED__ = true;
 
   var DATA_KEY = 'sf_data_v1';
-  var SCHEMA_VERSION = 8;   // 数据结构版本：改结构时 +1，并在 migrate() 里补一步
+  var SCHEMA_VERSION = 9;   // 数据结构版本：改结构时 +1，并在 migrate() 里补一步
   var DEBUG = false;
   function log() { if (DEBUG) console.log.apply(console, ['[SF]'].concat([].slice.call(arguments))); }
 
@@ -248,7 +248,7 @@
   /* hostOf() / panOf() → magnet-core.js */
 
   /* ---------------- 运行时状态 ---------------- */
-  var S = { settings: {}, sites: [], rules: [], seen: {}, favCodes: {}, discovered: {}, groups: [], statsLog: {}, watchlist: {}, cooc: {}, peeks: {}, errLog: [], shopMarks: {}, codeMarks: {}, dropped: {} };
+  var S = { settings: {}, sites: [], rules: [], seen: {}, favCodes: {}, discovered: {}, groups: [], statsLog: {}, watchlist: {}, cooc: {}, peeks: {}, errLog: [], shopMarks: {}, codeMarks: {}, dropped: {}, siteHealth: {} };
 
   /* 增量提取缓存：同一张卡片只跑一次 extract()（无限滚动追加卡片时只算新的）
      注意：缓存键是卡片元素，但卡片内容可能被就地更新（懒加载标题 / 状态角标 / 换图），
@@ -563,6 +563,11 @@
       8: function (x) {
         x.codeMarks = x.codeMarks || {};
         x.dropped = x.dropped || {};
+      },
+      // v8 → v9：站点模板失效自检 siteHealth（站点 id → { lastOkAt, failStreak }）。
+      //           与 background.js / options.js 的 step 9 必须逐字一致。纯新增对象，老数据补空即可。
+      9: function (x) {
+        x.siteHealth = x.siteHealth || {};
       }
     };
     for (var v = from + 1; v <= SCHEMA_VERSION; v++) {
@@ -570,6 +575,46 @@
     }
     d.schemaVersion = SCHEMA_VERSION;
     return d;
+  }
+
+  /* ---------------- 站点模板失效自检（纯本地，零网络请求） ----------------
+   * 站点一改版，卡片选择器命中 0 是完全静默的 —— 你看到的是"这站今天没内容"，
+   * 而不是"扩展坏了"。这里只记「上次成功识别到卡片」的时间与连续 0 命中次数，
+   * 由设置页提示，不自动改任何东西（修的入口 🎯 早已存在）。
+   * ⚠️ 判据刻意宽松：搜索确实可能 0 结果，所以只报「曾多次成功、近期连续多次 0 命中」
+   * 的站，避免把一次空搜索误判成模板坏了。 */
+  function dayNumOf(ts) { return Math.floor((ts || 0) / 86400000); }
+  function healthTick(h, n, nowMs) {
+    var next = h ? { lastOkAt: h.lastOkAt || 0, failStreak: h.failStreak || 0 } : { lastOkAt: 0, failStreak: 0 };
+    var changed = false;
+    if (n > 0) {
+      if (dayNumOf(next.lastOkAt) !== dayNumOf(nowMs)) { next.lastOkAt = nowMs; changed = true; }
+      if (next.failStreak !== 0) { next.failStreak = 0; changed = true; }
+    } else if (next.lastOkAt > 0) {
+      next.failStreak = next.failStreak + 1; changed = true;
+    }
+    return { next: next, changed: changed };
+  }
+  function isSiteStale(h, threshold) {
+    return !!(h && h.failStreak >= (threshold || HEALTH_FAIL_THRESHOLD) && h.lastOkAt > 0);
+  }
+  var HEALTH_FAIL_THRESHOLD = 3;
+  var lastHealthUrl = '';
+  var healthSave = null;
+  function recordHealth(n) {
+    if (!currentSite || !currentSite.id) return;
+    var url = location.href;
+    if (url === lastHealthUrl) return;   // 同一页只评估一次（无限滚动的多次 runPass 不重复计数）
+    lastHealthUrl = url;
+    var id = currentSite.id;
+    var h = (S.siteHealth && S.siteHealth[id]) || null;
+    var res = healthTick(h, n, Date.now());
+    if (res.changed) {
+      S.siteHealth = S.siteHealth || {};
+      S.siteHealth[id] = res.next;
+      if (!healthSave) healthSave = debounce(function () { saveState({ siteHealth: S.siteHealth }); }, 4000);
+      healthSave();
+    }
   }
 
   function loadState() {
@@ -599,6 +644,7 @@
           S.shopMarks = d.shopMarks || {};
           S.codeMarks = d.codeMarks || {};
           S.dropped = d.dropped || {};
+          S.siteHealth = d.siteHealth || {};
           resolve();
         });
       } catch (e) { resolve(); }
@@ -608,7 +654,7 @@
   function saveState(patch) {
     return new Promise(function (resolve) {
       cfGet(function (o) {
-        var d = Object.assign({ sites: S.sites, rules: S.rules, seen: S.seen, favCodes: S.favCodes, discovered: S.discovered, groups: S.groups, statsLog: S.statsLog, dailyRecs: S.dailyRecs, recHistory: S.recHistory, recFeedback: S.recFeedback, watchlist: S.watchlist, cooc: S.cooc, similarRecs: S.similarRecs, recFeedbackDaily: S.recFeedbackDaily, peeks: S.peeks, errLog: S.errLog, shopMarks: S.shopMarks, codeMarks: S.codeMarks, dropped: S.dropped, settings: S.settings }, o || {});
+        var d = Object.assign({ sites: S.sites, rules: S.rules, seen: S.seen, favCodes: S.favCodes, discovered: S.discovered, groups: S.groups, statsLog: S.statsLog, dailyRecs: S.dailyRecs, recHistory: S.recHistory, recFeedback: S.recFeedback, watchlist: S.watchlist, cooc: S.cooc, similarRecs: S.similarRecs, recFeedbackDaily: S.recFeedbackDaily, peeks: S.peeks, errLog: S.errLog, shopMarks: S.shopMarks, codeMarks: S.codeMarks, dropped: S.dropped, siteHealth: S.siteHealth, settings: S.settings }, o || {});
         if (patch) Object.assign(d, patch);
         var payload = {};
         payload[DATA_KEY] = d;
@@ -1562,6 +1608,7 @@
     clearClones();
     var cards = findCards();
     stats = { cards: cards.length, blocked: 0, fav: 0, hl: 0, dl: 0, soft: 0, preview: 0 };
+    recordHealth(cards.length);
     // 此刻 cards 全是站点原生卡片 —— 这就是「原始数量」，补足以它为基准
     var origCount = cards.length;
     foundActress = new Map();
@@ -5084,6 +5131,21 @@
         Object.defineProperty(hookApi, k, { get: function () { return hookSrc[k]; }, enumerable: true });
       });
       Object.defineProperty(window, '__sfHook', { value: hookApi, enumerable: false });
+    }
+  } catch (e) { /* 测试钩子失败绝不影响主流程 */ }
+
+  // 测试钩子：仅供 _test_newfeat.js 用（content.js 顶层是 IIFE，healthTick 等不挂 window）。
+  // 仅当测试显式声明 window.__sfTest 时挂载，生产环境永不触发；只暴露纯函数 + 受控入口。
+  try {
+    if (typeof window !== 'undefined' && window.__sfTest) {
+      window.__sfHealth = {
+        healthTick: healthTick,
+        isSiteStale: isSiteStale,
+        HEALTH_FAIL_THRESHOLD: HEALTH_FAIL_THRESHOLD,
+        recordHealth: recordHealth,
+        resetLastHealthUrl: function () { lastHealthUrl = ''; },
+        getSiteHealth: function () { return S.siteHealth; }
+      };
     }
   } catch (e) { /* 测试钩子失败绝不影响主流程 */ }
 

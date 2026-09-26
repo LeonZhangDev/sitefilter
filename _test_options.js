@@ -122,6 +122,7 @@ try {
   // 与真实页面一致：按 options.html 的 <script> 顺序先加载共享模块
   // （site-templates.js / expr.js / rulecheck.js），jsdom runScripts:'outside-only'
   // 不会自动取外部脚本，这里手动对齐。
+  win.__sfTest = true;   // 让 options.js 暴露 computePackUpgrade 供本测试直接断言
   win.eval(fs.readFileSync(path.join(EXT, 'site-templates.js'), 'utf8'));
   win.eval(fs.readFileSync(path.join(EXT, 'expr.js'), 'utf8'));
   win.eval(fs.readFileSync(path.join(EXT, 'rulecheck.js'), 'utf8'));
@@ -693,6 +694,7 @@ function bootOptionsWithRules(rules) {
     url: 'chrome-extension://abc/options.html', runScripts: 'outside-only', pretendToBeVisual: true,
   });
   const w = d.window;
+  w.__sfTest = true;   // 暴露 computePackUpgrade（同主窗口）
   const get = (k, cb) => {
     const o = {};
     if (typeof k === 'string') o[k] = st[k]; else Object.keys(k).forEach(x => o[x] = st[x]);
@@ -799,8 +801,60 @@ function finishTests() {
       check('[C][体检][回归] 老数据不会被报成「近期失效」',
         doc2.querySelector('#auditCount').textContent.indexOf('近期失效') === -1);
 
-      console.log(pass ? '\n设置页测试全部通过 ✅' : '\n存在失败 ❌');
-      process.exit(pass ? 0 : 1);
+      // —— 规则包升级 diff（computePackUpgrade + 升级确认路径）——
+      {
+        const r = (id, val, pack) => ({ id, type: 'tag', value: val, action: 'highlight', pack: pack || null });
+        // 首次导入：一个全新的 pack id，库里没有任何来自它的规则
+        const freshPack = { id: 'fresh', version: '1.0', rules: [
+          { type: 'tag', value: '高清', action: 'highlight' },
+          { type: 'tag', value: '4K', action: 'highlight' },
+          { type: 'tag', value: '蓝光', action: 'highlight' },
+          { type: 'tag', value: 'HDR', action: 'highlight' }
+        ] };
+        const d1 = win.computePackUpgrade(freshPack, []);
+        check('[升级] 首次导入判定为非升级', d1.upgrading === false && d1.added === 4 && d1.removed === 0);
+        // 已导入过的场景：库里已有 hd 包的 3 条 v1.0 规则 + 1 条手输规则（非包来源）
+        const rules = [
+          r('a', '高清', { id: 'hd', version: '1.0' }),
+          r('b', '4K', { id: 'hd', version: '1.0' }),
+          r('c', '中文字幕', { id: 'hd', version: '1.0' }),
+          r('d', '手输规则', null)
+        ];
+        const pack2 = { id: 'hd', version: '2.0', rules: [
+          { type: 'tag', value: '高清', action: 'highlight' },
+          { type: 'tag', value: '4K', action: 'highlight' },
+          { type: 'tag', value: '蓝光', action: 'highlight' }   // 中文字幕被移除、蓝光新增
+        ] };
+        const d2 = win.computePackUpgrade(pack2, rules);
+        check('[升级] 已导入过 → upgrading=true 且 oldVersion=1.0', d2.upgrading === true && d2.oldVersion === '1.0');
+        check('[升级] 新增/移除/保留计数正确', d2.added === 1 && d2.removed === 1 && d2.kept === 2);
+        check('[升级] 非包来源的规则不计入旧包删除', d2.removed === 1);
+
+        // 升级确认路径：种子一个 v0.9 的 hd 包（源码 hd 是 v1.0）→ 点导入触发升级确认
+        const w2 = bootOptionsWithRules([
+          r('e', '高清', { id: 'hd', version: '0.9' }),
+          r('f', '4K', { id: 'hd', version: '0.9' }),
+          r('g', '中文字幕', { id: 'hd', version: '0.9' })
+        ]);
+        // w2 自己的 storage 异步加载完才会跑 renderAll → 填充 #packSel 选项；
+        // 不等 boot 直接设 value 会被 jsdom 重置为空（无匹配 option），导致 pack 找不到、不弹确认。
+        setTimeout(() => {
+          const sel2 = w2.document.querySelector('#packSel');
+          sel2.value = 'hd';
+          sel2.dispatchEvent(new w2.Event('change', { bubbles: true }));
+          let confirmMsg = '';
+          w2.confirm = m => { confirmMsg = m; return true; };
+          w2.document.querySelector('#packApply').dispatchEvent(new w2.MouseEvent('click', { bubbles: true }));
+          check('[升级] 版本不一致时弹出升级确认（带 新增/移除/保留）', /新增/.test(confirmMsg) && /保留/.test(confirmMsg));
+          check('[升级] 确认文案含「升级」语义', /升级/.test(confirmMsg));
+          finish();
+        }, 200);
+      }
+
+      function finish() {
+        console.log(pass ? '\n设置页测试全部通过 ✅' : '\n存在失败 ❌');
+        process.exit(pass ? 0 : 1);
+      }
     }, 300);
   }, 300);
 }

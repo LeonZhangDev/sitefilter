@@ -81,6 +81,7 @@ function build(opts) {
     },
     runtime: { sendMessage() { return Promise.resolve(); }, onMessage: { addListener() { } } },
   };
+  win.__sfTest = true;   // 让 content.js 暴露 __sfHealth 供本测试直接断言（仅挂只读/受控入口）
   win.eval(code);
   return { win, store, dom };
 }
@@ -752,6 +753,38 @@ const blockedOf = el => !!el && el.classList.contains('cf-blocked');
       check('[弃] 取消后存储里的弃标记也被清掉',
         !((store.sf_data_v1.dropped || {})['ABC-001']));
     }
+  }
+
+  /* ============ ⑩ 站点模板失效自检（纯本地，零网络请求） ============ */
+  {
+    const { win: wj } = build({});
+    await sleep(600);
+    const H = wj.__sfHealth;
+    // 10a. 纯逻辑：healthTick / isSiteStale（content.js 顶层是 IIFE，这些函数不挂 window，走 __sfHealth 钩子）
+    // 命中且跨天 → 记录 lastOkAt，并清零 failStreak
+    const s1 = H.healthTick({ lastOkAt: 0, failStreak: 0 }, 3, 86400001);
+    check('[失效自检] 跨天命中 → 记录 lastOkAt 并清零 failStreak', s1.next.lastOkAt === 86400001 && s1.next.failStreak === 0 && s1.changed === true);
+    // 命中（即使同一天）→ failStreak 非 0 时仍清零，避免继续误报失效
+    const s1b = H.healthTick({ lastOkAt: 500, failStreak: 2 }, 3, 1000);
+    check('[失效自检] 命中卡片 → 清零失败计数（不再判失效）', s1b.next.failStreak === 0 && s1b.changed === true);
+    const s2 = H.healthTick({ lastOkAt: 0, failStreak: 0 }, 0, 1000);
+    check('[失效自检] 从未成功过的站 0 命中不计数（防误报）', s2.next.failStreak === 0 && s2.changed === false);
+    const s3 = H.healthTick({ lastOkAt: 500, failStreak: 1 }, 0, 1000);
+    check('[失效自检] 曾成功过的站 0 命中 → failStreak 累加', s3.next.failStreak === 2 && s3.changed === true);
+    check('[失效自检] failStreak 未达阈值不判失效', H.isSiteStale({ lastOkAt: 500, failStreak: 2 }, 3) === false);
+    check('[失效自检] 从未成功过的站不判失效', H.isSiteStale({ lastOkAt: 0, failStreak: 9 }, 3) === false);
+    check('[失效自检] 达阈值且曾成功 → 判失效', H.isSiteStale({ lastOkAt: 500, failStreak: 3 }, 3) === true);
+
+    // 10b. 集成（内存态，不依赖落盘防抖）：runPass 自动记录命中站点，再模拟连续 0 命中
+    const h0 = H.getSiteHealth();
+    check('[失效自检] runPass 自动记录命中站点的 siteHealth', !!(h0 && h0.s1 && h0.s1.lastOkAt > 0));
+    H.resetLastHealthUrl(); H.recordHealth(0);
+    H.resetLastHealthUrl(); H.recordHealth(0);
+    H.resetLastHealthUrl(); H.recordHealth(0);
+    H.resetLastHealthUrl(); H.recordHealth(0);
+    const h1 = H.getSiteHealth().s1;
+    check('[失效自检] 连续多次 0 命中 → failStreak 累加', h1.failStreak >= 3);
+    check('[失效自检] 达阈值判定为失效', H.isSiteStale(h1, H.HEALTH_FAIL_THRESHOLD) === true);
   }
 
   console.log(pass ? '\n新增功能专项测试全部通过 ✅' : '\n存在失败 ❌');

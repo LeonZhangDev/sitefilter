@@ -932,9 +932,9 @@ title =~ /^(SSIS|STARS)-\d+/ && !(tag ~ 巨乳)
 存储里带 **`schemaVersion`**，启动时自动 `migrate()`。导入旧备份会先升级到当前结构再写入。
 以后我改数据结构时，你的老数据能被安全迁移，不再依赖零散的 `d.x || {}` 兜底。
 
-> 当前是 **`schemaVersion: 8`**（第 7 版加规则命中按天分桶 `hitDays`；第 8 版加**番号级标记**
-> `codeMarks`（影片评分 / 备注）与 `dropped`（「弃」））。7 → 8 是**纯加法**：老数据这两个字段
-> 补成空对象即可，不需要回填（**历史评分不回填**，因为以前根本没记过）。
+> 当前是 **`schemaVersion: 9`**（第 7 版加规则命中按天分桶 `hitDays`；第 8 版加**番号级标记**
+> `codeMarks`（影片评分 / 备注）与 `dropped`（「弃」）；第 9 版加**站点模板失效自检** `siteHealth`
+> （站点 id → `{ lastOkAt, failStreak }`））。8 → 9 是**纯加法**：老数据补成空对象即可，不回填历史。
 
 > **三个文件的版本号必须一致**：`content.js` / `background.js` / `options.js` 各有一份 `migrate()`。
 > 只改其中一两处的版本号，最轻是"迁移白跑一遍"，最重是 **content.js 用旧版本号写回 → 把数据降级**
@@ -942,13 +942,15 @@ title =~ /^(SSIS|STARS)-\d+/ && !(tag ~ 巨乳)
 > 三处 `SCHEMA_VERSION` 必须相等、每处都要有对应的 `step N` 函数、各文件的读取函数都必须挂上新字段。
 > v1.1.0 就是被这个守卫抓出了 `content.js` 忘了升级、以及 `background.js` 漏补 `expiredLog` 两个真实 bug。
 
-**当前 `SCHEMA_VERSION = 7`。各版本的迁移步**（每一步只补字段 / 不改已有值，导入旧备份时按序补齐）：
+**当前 `SCHEMA_VERSION = 9`。各版本的迁移步**（每一步只补字段 / 不改已有值，导入旧备份时按序补齐）：
 
 | 版本 | 改了什么 |
 | --- | --- |
 | 5 | 站点模板化（站点表与全部派生收进 `site-templates.js`，三端共用） |
 | 6 | 屏蔽三档 `blockDisplay`（硬屏蔽 / 软屏蔽 / 只看收藏） |
 | 7 | 规则命中时效画像：每条规则补 `hitDays`（按天分桶），**不回填历史** |
+| 8 | 番号级标记：`codeMarks`（影片评分 / 备注）与 `dropped`（「弃」），**不回填历史** |
+| 9 | 站点模板失效自检：`siteHealth`（站点 id → `{ lastOkAt, failStreak }`），**不回填历史** |
 
 > v7 的「不回填历史」是有意的：升级前的命中没有逐日记录，**补不出来**。
 > 所以补的是空的 `hitDays`，界面据此把「无数据」显示成不显示、把「确实 0 命中」显示成 `0`
@@ -1083,7 +1085,7 @@ python ci.py --release minor           # 门禁通过 → 抬次版本 → 出�
 - `dist/build-info.json` —— 版本、`schemaVersion`、构建时间、git hash / 是否 dirty、
   每个文件的 sha256、以及**这次打包前跑测试的结果**。出问题时先看这个。
 
-`schemaVersion: 8` · `manifest version: 1.4.1`
+`schemaVersion: 9` · `manifest version: 1.4.1`
 
 **打包脚本做了什么**：只收录**白名单文件**（而不是"排除"——避免漏排测试/临时文件）、校验
 manifest 必填字段与图标真实尺寸、检查 `default_locale` 之类会导致「加载失败」的坑、

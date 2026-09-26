@@ -264,7 +264,7 @@ function load(seed) {
 
 /* ============ ③y 各文件 getData/get() 都要挂上新字段 ============ */
 {
-  const must = ['learned', 'dismissedLearn', 'profiles', 'activeProfile', 'expiredLog'];
+  const must = ['learned', 'dismissedLearn', 'profiles', 'activeProfile', 'expiredLog', 'siteHealth'];
   ['content.js', 'background.js', 'options.js'].forEach(f => {
     const s = fs.readFileSync(path.join(__dirname, f), 'utf8');
     must.forEach(k => {
@@ -306,6 +306,19 @@ function load(seed) {
   check('设置页开关列表含 ballLock', /\['ballLock',/.test(src['options.js']));
   check('content.js 拖动前检查 ballLock', /if \(S\.settings\.ballLock\) return;/.test(src['content.js']));
   check('content.js 有锁定状态的球体样式', /\.cf-ball\.locked/.test(src['content.js']));
+}
+
+/* ============ ③f v8 → v9：站点模板失效自检 siteHealth ============ */
+{
+  const { ctx } = load({ sf_data_v1: { settings: {}, schemaVersion: 8 } });
+  check('当前 SCHEMA_VERSION 至少是 9', ctx.SCHEMA_VERSION >= 9);
+  const v9 = ctx.migrate({ settings: {}, schemaVersion: 8, codeMarks: { A: { r: 5 } }, dropped: { B: 1 } });
+  check('v9 迁移后版本号 = 当前版本', v9.schemaVersion === ctx.SCHEMA_VERSION);
+  check('v9 迁移补齐 siteHealth（对象、非数组）',
+    !!v9.siteHealth && typeof v9.siteHealth === 'object' && !Array.isArray(v9.siteHealth));
+  check('v9 迁移不覆盖已有的 codeMarks / dropped', !!v9.codeMarks.A && !!v9.dropped.B);
+  check('v9 迁移幂等：再跑一次结果一致',
+    JSON.stringify(ctx.migrate(JSON.parse(JSON.stringify(v9)))) === JSON.stringify(v9));
 }
 
 /* ============ ④ 更高版本数据：不崩，只记日志 ============ */

@@ -11,7 +11,7 @@ if (typeof importScripts === 'function') {
 }
 
 var DATA_KEY = 'sf_data_v1';
-var SCHEMA_VERSION = 8;   // 与 content.js / options.js 保持一致
+var SCHEMA_VERSION = 9;   // 与 content.js / options.js 保持一致
 
 /* ---------------- 本地错误日志（与 content.js 共用同一份 errLog） ---------------- */
 var ERR_MAX = 200;
@@ -160,6 +160,11 @@ function migrate(d) {
     8: function (x) {
       x.codeMarks = x.codeMarks || {};
       x.dropped = x.dropped || {};
+    },
+    // v8 → v9：站点模板失效自检 siteHealth（站点 id → { lastOkAt, failStreak }）。
+    //           与 content.js / options.js 的 step 9 必须逐字一致。纯新增对象，老数据补空即可。
+    9: function (x) {
+      x.siteHealth = x.siteHealth || {};
     }
   };
   for (var v = from + 1; v <= SCHEMA_VERSION; v++) {
